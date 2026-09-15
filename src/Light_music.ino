@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.3.7"
+#define FIRMWARE_VERSION "1.4.3"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -51,6 +51,12 @@
 const char* OTA_HOSTNAME = "light-music";
 const char* FIRMWARE_UPDATE_URL = "https://mystation.pp.ua:85/Light_music/firmware/version.json";
 const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годину (мс)
+
+// ======================= GETSONGBPM.COM API =======================
+// getsongbpm.com/api -> реєстрація -> API-ключ (без OAuth, простий ключ)
+// Сам ключ лежить в getsongbpm_secret.h — НЕ комітиться в Git (див. .gitignore)
+#include "getsongbpm_secret.h"
+// =====================================================================
 // ===================================================================
 
 #include <FastLED.h>
@@ -223,10 +229,11 @@ void fxSinelon() {
   gHue++;
 }
 
+float songBpm = 62; // за замовчуванням; оновлюється пошуком пісні через Spotify
+
 void fxBpm() {
-  uint8_t bpm = 62;
   CRGBPalette16 palette = PartyColors_p;
-  uint8_t beat = beatsin8(bpm, 64, 255);
+  uint8_t beat = beatsin8((uint8_t)constrain(songBpm, 10, 240), 64, 255);
   for (int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ColorFromPalette(palette, gHue + (i * 2), beat - gHue + (i * 10));
   }
@@ -379,11 +386,18 @@ bool forceUpdateCheck = false;
 String lastUpdateCheckResult = "ще не перевірялось";
 Preferences prefs;
 
+unsigned long lastWifiReconnectAttempt = 0;
+const unsigned long WIFI_RECONNECT_INTERVAL = 30000; // спроба раз на 30 сек, поки WiFi відсутній
+bool wasWifiConnected = false;
+
 // ================================================================
 //                          WIFI / OTA / WEB
 // ================================================================
 
 void setupWiFi() {
+  WiFi.persistent(true);
+  WiFi.setAutoReconnect(true);
+
   WiFiManager wm;
   wm.setConfigPortalTimeout(180); // 3 хв на налаштування, потім працює далі офлайн демо-режимом
   bool connected = wm.autoConnect("LightMusic-Setup");
@@ -434,6 +448,13 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <h1>Light_music</h1>
 <div id="status">Завантаження...</div>
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
+
+<div class="row">
+  <input type="text" id="songSearch" placeholder="Назва пісні або виконавця" style="flex:1; padding:8px; border-radius:6px; border:none; background:#222; color:#eee;">
+  <button onclick="searchSong()">🎵 Знайти пісню</button>
+</div>
+<div id="songResult" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
+<div style="font-size:11px; color:#555; margin-bottom:16px;">Темп пісень — <a href="https://getsongbpm.com" target="_blank" style="color:#666;">getsongbpm.com</a></div>
 
 <div class="row">
   <label><input type="checkbox" id="micToggle"> Мікрофон (світломузика)</label>
@@ -490,6 +511,26 @@ const reboot = () => {
     document.getElementById('status').innerText = 'Перезавантажуюсь...';
   }
 };
+const searchSong = () => {
+  const q = document.getElementById('songSearch').value.trim();
+  if (!q) return;
+  document.getElementById('songResult').innerText = 'Шукаю...';
+  fetch('/search?q=' + encodeURIComponent(q))
+    .then(r => r.json())
+    .then(res => {
+      if (res.ok) {
+        document.getElementById('songResult').innerText =
+          `🎵 ${res.artist} — ${res.name} (${res.bpm.toFixed(0)} BPM)`;
+      } else {
+        document.getElementById('songResult').innerText = 'Помилка: ' + res.error;
+      }
+      loadStatus();
+    })
+    .catch(() => {
+      document.getElementById('songResult').innerText = 'Помилка з\'єднання';
+    });
+};
+
 const checkUpdate = () => {
   fetch('/checkupdate');
   document.getElementById('updateStatus').innerText = 'Оновлення: перевіряю...';
@@ -627,6 +668,38 @@ void handleBrightness() {
   server.send(200, "text/plain", "OK");
 }
 
+void handleSearchSong() {
+  if (!server.hasArg("q")) {
+    server.send(400, "application/json", "{\"ok\":false,\"error\":\"немає запиту\"}");
+    return;
+  }
+  String query = server.arg("q");
+
+  String name, artist, error;
+  float bpm = 0;
+  bool ok = searchSongBpmAndApply(query, name, artist, bpm, error);
+
+  JsonDocument doc;
+  doc["ok"] = ok;
+  if (ok) {
+    songBpm = bpm;
+    currentEffect = 4; // fxBpm — 5-й у списку effects[]
+    autoCycle = false;
+    micEnabled = false;
+    FastLED.clear();
+    doc["name"] = name;
+    doc["artist"] = artist;
+    doc["bpm"] = bpm;
+    Serial.printf("[GetSongBPM] %s — %s, BPM: %.1f\n", artist.c_str(), name.c_str(), bpm);
+  } else {
+    doc["error"] = error;
+    Serial.println("[GetSongBPM] Помилка: " + error);
+  }
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
 void handleCheckUpdate() {
   forceUpdateCheck = true;
   server.send(200, "text/plain", "OK, перевіряю...");
@@ -641,10 +714,62 @@ void setupWebServer() {
   server.on("/mic", handleMic);
   server.on("/brightness", handleBrightness);
   server.on("/checkupdate", handleCheckUpdate);
+  server.on("/search", handleSearchSong);
   server.on("/resetwifi", handleResetWifi);
   server.on("/reboot", handleReboot);
   server.begin();
   Serial.println("Веб-сервер запущений — відкрий IP плати в браузері");
+}
+
+// ---------- GETSONGBPM: пошук пісні і темп, одним запитом, без OAuth ----------
+String urlEncode(const String &str) {
+  String encoded = "";
+  char buf[4];
+  for (size_t i = 0; i < str.length(); i++) {
+    char c = str.charAt(i);
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded += c;
+    } else if (c == ' ') {
+      encoded += '+';
+    } else {
+      sprintf(buf, "%%%02X", (unsigned char)c);
+      encoded += buf;
+    }
+  }
+  return encoded;
+}
+
+bool searchSongBpmAndApply(const String &query, String &outName, String &outArtist, float &outBpm, String &outError) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = "https://api.getsong.co/search/?type=song&lookup="
+                + urlEncode(query) + "&api_key=" + String(GETSONGBPM_API_KEY);
+  http.begin(client, url);
+  int code = http.GET();
+  if (code != 200) {
+    outError = "помилка пошуку, код " + String(code);
+    http.end();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+  Serial.println("[GetSongBPM] Відповідь: " + payload); // для налагодження точної структури JSON при першому запуску
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err) { outError = "помилка розбору відповіді"; return false; }
+
+  JsonArray results = doc["search"].as<JsonArray>();
+  if (results.isNull() || results.size() == 0) { outError = "пісню не знайдено"; return false; }
+
+  JsonObject song = results[0];
+  outName = song["title"].as<String>();
+  outArtist = song["artist"]["name"].as<String>();
+  outBpm = song["tempo"].as<float>();
+  return outBpm > 0;
 }
 
 // ---------- HTTP OTA: перевірка нової версії на Synology ----------
@@ -735,6 +860,7 @@ void setup() {
   setupWebServer();
   setupI2S();
   for (int i = 0; i < NUM_BANDS; i++) bandPeaks[i] = 0;
+  wasWifiConnected = (WiFi.status() == WL_CONNECTED);
 
   lastSwitch = millis();
   Serial.printf("Демо-режим. Ефект 1/%d: %s\n", NUM_EFFECTS, effectNames[0]);
@@ -758,9 +884,27 @@ void loop() {
   buttonWasPressed = buttonPressed;
 
   if (WiFi.status() == WL_CONNECTED) {
+    if (!wasWifiConnected) {
+      // Щойно відновилось з'єднання (не просто перший запуск) — перезапускаємо
+      // mDNS/OTA, бо вони інколи "не оживають" самі після реального обриву
+      Serial.print("[WiFi] Підключення відновлено, IP: ");
+      Serial.println(WiFi.localIP());
+      setupMDNS();
+      setupOTA();
+      wasWifiConnected = true;
+    }
     server.handleClient();
     ArduinoOTA.handle();
     checkFirmwareUpdate();
+  } else {
+    wasWifiConnected = false;
+    // WiFi відпав — пробуємо перепідключитись раз на WIFI_RECONNECT_INTERVAL,
+    // не блокуючи основний цикл (ефекти й далі йдуть, поки чекаємо мережу)
+    if (millis() - lastWifiReconnectAttempt >= WIFI_RECONNECT_INTERVAL) {
+      lastWifiReconnectAttempt = millis();
+      Serial.println("[WiFi] З'єднання втрачено, пробую перепідключитись...");
+      WiFi.reconnect();
+    }
   }
 
   if (micEnabled) {
