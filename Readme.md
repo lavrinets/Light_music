@@ -1,0 +1,1 @@
+## Подяки Дані про темп (BPM) пісень надаються сервісом [GetSongBPM.com](https://getsongbpm.com)
