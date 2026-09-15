@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.3.1"
+#define FIRMWARE_VERSION "1.3.4"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -61,6 +61,8 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 #include <HTTPClient.h>
 #include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
+#include <ESPmDNS.h>
+#include <Preferences.h>
 #include <ArduinoJson.h>
 #include <driver/i2s_std.h>
 #include <ArduinoFFT.h>
@@ -68,9 +70,10 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     4
 #define NUM_LEDS    60          // <-- кількість діодів у стрічці
-#define BRIGHTNESS  120         // 0-255
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
+
+uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
@@ -372,6 +375,10 @@ const uint8_t NUM_EFFECTS = sizeof(effects) / sizeof(effects[0]);
 uint8_t currentEffect = 0;
 unsigned long lastSwitch = 0;
 
+bool forceUpdateCheck = false;
+String lastUpdateCheckResult = "ще не перевірялось";
+Preferences prefs;
+
 // ================================================================
 //                          WIFI / OTA / WEB
 // ================================================================
@@ -395,6 +402,16 @@ void setupOTA() {
   Serial.println("ArduinoOTA готовий (заливка прошивки по WiFi з PlatformIO)");
 }
 
+void setupMDNS() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (MDNS.begin(OTA_HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.printf("mDNS готовий — відкривай http://%s.local\n", OTA_HOSTNAME);
+  } else {
+    Serial.println("Не вдалось запустити mDNS");
+  }
+}
+
 const char PAGE_HTML[] PROGMEM = R"HTML(
 <!DOCTYPE html>
 <html lang="uk">
@@ -410,19 +427,27 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
   button { padding:10px; border:none; border-radius:8px; background:#333; color:#eee; cursor:pointer; }
   button.active { background:#3a7; color:#000; }
   .row { margin:10px 0; display:flex; align-items:center; gap:10px; }
+  input[type=range] { flex:1; max-width:300px; }
 </style>
 </head>
 <body>
 <h1>Light_music</h1>
 <div id="status">Завантаження...</div>
+<div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
 <div class="row">
   <label><input type="checkbox" id="micToggle"> Мікрофон (світломузика)</label>
 </div>
 <div class="row">
+  <span>🔅</span>
+  <input type="range" id="brightnessSlider" min="0" max="255" value="120">
+  <span>🔆</span>
+</div>
+<div class="row">
   <button onclick="setAuto()">Авто-перемикання ефектів</button>
   <button onclick="resetWifi()" style="background:#733;">Змінити WiFi</button>
   <button onclick="reboot()" style="background:#753;">Перезавантажити плату</button>
+  <button onclick="checkUpdate()">Перевірити оновлення</button>
 </div>
 
 <div class="grid" id="effectGrid"></div>
@@ -434,7 +459,11 @@ const loadStatus = async () => {
   const s = await r.json();
   document.getElementById('status').innerText =
     `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'} | v${s.version}`;
+  document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
   document.getElementById('micToggle').checked = s.mic;
+  if (!brightnessDragging) {
+    document.getElementById('brightnessSlider').value = s.brightness;
+  }
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
   });
@@ -461,9 +490,51 @@ const reboot = () => {
     document.getElementById('status').innerText = 'Перезавантажуюсь...';
   }
 };
+const checkUpdate = () => {
+  fetch('/checkupdate');
+  document.getElementById('updateStatus').innerText = 'Оновлення: перевіряю...';
+  let attempts = 0;
+  const poll = () => {
+    attempts++;
+    fetch('/status')
+      .then(r => r.json())
+      .then(s => {
+        document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
+        // якщо все ще "оновлююсь" — плата, можливо, перезавантажується, питаємо ще раз
+        if (s.updateStatus.includes('оновлююсь') && attempts < 30) {
+          setTimeout(poll, 2000);
+        } else {
+          loadStatus();
+        }
+      })
+      .catch(() => {
+        // плата тимчасово недоступна (ймовірно перезавантажується) — пробуємо ще раз
+        if (attempts < 30) {
+          document.getElementById('updateStatus').innerText = 'Оновлення: плата перезавантажується...';
+          setTimeout(poll, 2000);
+        }
+      });
+  };
+  setTimeout(poll, 2000);
+};
 document.getElementById('micToggle').addEventListener('change', (e) => {
   fetch('/mic?on=' + (e.target.checked ? '1' : '0')).then(loadStatus);
 });
+
+let brightnessDragging = false;
+let brightnessDebounce = null;
+const brightnessSlider = document.getElementById('brightnessSlider');
+brightnessSlider.addEventListener('input', (e) => {
+  brightnessDragging = true;
+  clearTimeout(brightnessDebounce);
+  brightnessDebounce = setTimeout(() => {
+    fetch('/brightness?v=' + e.target.value);
+  }, 150);
+});
+brightnessSlider.addEventListener('change', () => {
+  brightnessDragging = false;
+});
+
 buildGrid();
 loadStatus();
 setInterval(loadStatus, 2000);
@@ -491,7 +562,9 @@ void handleStatus() {
   doc["index"] = currentEffect;
   doc["mic"] = micEnabled;
   doc["auto"] = autoCycle;
+  doc["brightness"] = currentBrightness;
   doc["version"] = FIRMWARE_VERSION;
+  doc["updateStatus"] = lastUpdateCheckResult;
   String out;
   serializeJson(doc, out);
   server.send(200, "application/json", out);
@@ -542,6 +615,23 @@ void handleResetWifi() {
   ESP.restart();
 }
 
+void handleBrightness() {
+  if (server.hasArg("v")) {
+    int v = server.arg("v").toInt();
+    if (v >= 0 && v <= 255) {
+      currentBrightness = v;
+      FastLED.setBrightness(currentBrightness);
+      Serial.printf("[web] Яскравість: %d\n", currentBrightness);
+    }
+  }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleCheckUpdate() {
+  forceUpdateCheck = true;
+  server.send(200, "text/plain", "OK, перевіряю...");
+}
+
 void setupWebServer() {
   if (WiFi.status() != WL_CONNECTED) return;
   server.on("/", handleRoot);
@@ -549,6 +639,8 @@ void setupWebServer() {
   server.on("/effect", handleSetEffect);
   server.on("/auto", handleSetAuto);
   server.on("/mic", handleMic);
+  server.on("/brightness", handleBrightness);
+  server.on("/checkupdate", handleCheckUpdate);
   server.on("/resetwifi", handleResetWifi);
   server.on("/reboot", handleReboot);
   server.begin();
@@ -559,8 +651,11 @@ void setupWebServer() {
 void checkFirmwareUpdate() {
   static unsigned long lastCheck = 0;
   if (WiFi.status() != WL_CONNECTED) return;
-  if (lastCheck != 0 && millis() - lastCheck < UPDATE_CHECK_INTERVAL) return;
+
+  bool forced = forceUpdateCheck;
+  if (!forced && lastCheck != 0 && millis() - lastCheck < UPDATE_CHECK_INTERVAL) return;
   lastCheck = millis();
+  forceUpdateCheck = false;
 
   WiFiClientSecure client;
   client.setInsecure(); // ОК для Let's Encrypt теж; прибери й додай сертифікат, якщо хочеш строгу перевірку
@@ -568,6 +663,7 @@ void checkFirmwareUpdate() {
   HTTPClient http;
   if (!http.begin(client, FIRMWARE_UPDATE_URL)) {
     Serial.println("[OTA] Не вдалось відкрити з'єднання для перевірки версії");
+    lastUpdateCheckResult = "помилка з'єднання";
     return;
   }
 
@@ -581,17 +677,31 @@ void checkFirmwareUpdate() {
       if (newVersion.length() && newVersion != FIRMWARE_VERSION) {
         Serial.printf("[OTA] Знайдено нову версію %s (поточна %s), оновлююсь...\n",
                       newVersion.c_str(), FIRMWARE_VERSION);
+        lastUpdateCheckResult = "знайдено v" + newVersion + ", оновлююсь...";
+        httpUpdate.onProgress([](int cur, int total) {
+          static int lastPercent = -1;
+          int percent = total > 0 ? (cur * 100 / total) : 0;
+          if (percent != lastPercent && percent % 10 == 0) {
+            Serial.printf("[OTA] Завантаження: %d%%\n", percent);
+            lastPercent = percent;
+          }
+        });
         t_httpUpdate_return ret = httpUpdate.update(client, binUrl);
         if (ret == HTTP_UPDATE_FAILED) {
           Serial.printf("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
+          lastUpdateCheckResult = "помилка оновлення: " + String(httpUpdate.getLastErrorString().c_str());
         }
         // при успіху плата сама перезавантажиться
       } else {
         Serial.println("[OTA] Версія актуальна");
+        lastUpdateCheckResult = "версія актуальна (v" + String(FIRMWARE_VERSION) + ")";
       }
+    } else {
+      lastUpdateCheckResult = "помилка розбору version.json";
     }
   } else {
     Serial.printf("[OTA] Не вдалось перевірити версію, код: %d\n", code);
+    lastUpdateCheckResult = "помилка перевірки, код " + String(code);
   }
   http.end();
 }
@@ -604,15 +714,24 @@ void setup() {
   Serial.begin(115200);
   Serial.printf("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
 
+  prefs.begin("lightmusic", false);
+  String lastVersion = prefs.getString("version", "");
+  if (lastVersion.length() && lastVersion != FIRMWARE_VERSION) {
+    lastUpdateCheckResult = "успішно оновлено з v" + lastVersion + " до v" + String(FIRMWARE_VERSION) + "!";
+    Serial.println("[OTA] " + lastUpdateCheckResult);
+  }
+  prefs.putString("version", FIRMWARE_VERSION);
+
   pinMode(WIFI_RESET_BUTTON_PIN, INPUT_PULLUP);
 
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-  FastLED.setBrightness(BRIGHTNESS);
+  FastLED.setBrightness(currentBrightness);
   FastLED.clear();
   FastLED.show();
 
   setupWiFi();
   setupOTA();
+  setupMDNS();
   setupWebServer();
   setupI2S();
   for (int i = 0; i < NUM_BANDS; i++) bandPeaks[i] = 0;

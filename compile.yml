@@ -1,0 +1,36 @@
+name: PlatformIO CI
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'lib/**'
+      - 'include/**'
+      - 'platformio.ini'
+      - '.github/workflows/compile.yml'
+  pull_request:
+  workflow_dispatch:   # дозволяє запустити вручну з вкладки Actions
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build project
+        run: pio run -e esp32-c3-devkitm-1
