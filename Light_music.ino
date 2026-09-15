@@ -1,32 +1,69 @@
 /*
-  ESP32-C3 + WS2812B — СВІТЛОМУЗИКА
+  ESP32-C3 + WS2812B — СВІТЛОМУЗИКА з WiFi, веб-керуванням та OTA
 
-  Режим перемикається ОДНИМ прапорцем нижче:
-    USE_MICROPHONE 1  -> реальна світломузика (I2S мікрофон INMP441 + FFT)
-    USE_MICROPHONE 0  -> демо-режим: 17 світлових ефектів по колу, 30 сек кожен
-                         (мікрофон не потрібен, зручно для відладки стрічки/живлення)
+  Можливості:
+    - 17 демо-ефектів, автоперемикання кожні 30 сек (можна вимкнути з вебсторінки)
+    - Світломузика з мікрофона (I2S INMP441 + FFT) — вмикається/вимикається з вебсторінки
+    - Веб-сторінка керування прямо з плати (відкрий IP плати в браузері)
+    - WiFiManager: при першому вмиканні (або якщо WiFi не знайдено) плата підіймає
+      власну точку доступу "LightMusic-Setup" — підключись до неї з телефону,
+      відкриється сторінка вибору домашньої мережі й пароля. Дані зберігаються,
+      наступного разу підключається сама.
+    - ArduinoOTA — заливка прошивки по WiFi прямо з PlatformIO (для розробки)
+    - HTTP OTA — раз на годину плата перевіряє version.json на твоєму Synology,
+      і якщо там інша версія — сама завантажує і прошиває firmware.bin
 
-  Бібліотеки (Library Manager):
-    - FastLED (>=3.7.0)          -- завжди потрібна
-    - ArduinoFFT (>=2.0.0)       -- потрібна лише якщо USE_MICROPHONE = 1
+  Бібліотеки (додай у platformio.ini lib_deps):
+    - fastled/FastLED @ ^3.7.0
+    - kosme/arduinoFFT @ ^2.0.0
+    - tzapu/WiFiManager @ ^2.0.17
+    - bblanchon/ArduinoJson @ ^7.0.0
 
   Піни (зміни під свою плату):
     LED_PIN    = 4   -> DIN стрічки (через резистор ~330 Ом)
-    I2S_SCK    = 6   -> SCK мікрофона     (лише якщо USE_MICROPHONE = 1)
+    I2S_SCK    = 6   -> SCK мікрофона
     I2S_WS     = 7   -> WS (LRCL) мікрофона
     I2S_SD     = 5   -> SD (DOUT) мікрофона
+
+  === НАЛАШТУВАННЯ НА SYNOLOGY ===
+  Постав пакет Web Station (або просто розшар папку через File Station з веб-доступом).
+  Створи папку /firmware з двома файлами:
+
+    version.json:
+      {
+        "version": "1.2.0",
+        "url": "https://твій-ddns.synology.me:ПОРТ/firmware/firmware.bin"
+      }
+
+    firmware.bin — сам скомпільований бінарник (лежить після Build у
+      .pio/build/esp32-c3-devkitm-1/firmware.bin, скопіюй туди вручну після кожної збірки)
+
+  Онови FIRMWARE_UPDATE_URL нижче під свій реальний DDNS-адрес і порт.
 */
 
-// ======================= ГОЛОВНИЙ ПЕРЕМИКАЧ =======================
-#define USE_MICROPHONE 0   // 1 = світломузика з мікрофоном, 0 = демо 17 ефектів
+// ======================= ВЕРСІЯ ПРОШИВКИ =======================
+#define FIRMWARE_VERSION "1.3.1"
+// Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
+// інакше плата вирішить, що оновлення не потрібне.
+// ===================================================================
+
+// ======================= НАЛАШТУВАННЯ WIFI/OTA =======================
+const char* OTA_HOSTNAME = "light-music";
+const char* FIRMWARE_UPDATE_URL = "https://mystation.pp.ua:85/Light_music/firmware/version.json";
+const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годину (мс)
 // ===================================================================
 
 #include <FastLED.h>
-
-#if USE_MICROPHONE
-  #include <driver/i2s.h>
-  #include <ArduinoFFT.h>
-#endif
+#include <WiFi.h>
+#include <WiFiManager.h>
+#include <WebServer.h>
+#include <ArduinoOTA.h>
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include <driver/i2s_std.h>
+#include <ArduinoFFT.h>
 
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     4
@@ -35,12 +72,24 @@
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
 
+// ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
+#define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
+#define WIFI_RESET_HOLD_MS 5000   // утримувати 5 сек, щоб скинути WiFi
+unsigned long buttonPressStart = 0;
+bool buttonWasPressed = false;
+
 CRGB leds[NUM_LEDS];
 uint8_t gHue = 0;
 
-#if USE_MICROPHONE
+// ---------- РЕЖИМ РОБОТИ (керується з вебсторінки) ----------
+bool micEnabled = false;   // false = демо-ефекти, true = світломузика з мікрофона
+bool autoCycle  = true;    // false = ефект зафіксований вручну через вебсторінку
+
+WebServer server(80);
+
 // ================================================================
-//                     РЕЖИМ: СВІТЛОМУЗИКА (МІКРОФОН)
+//                  МІКРОФОН (I2S) + FFT — завжди в прошивці,
+//                  але активний тільки коли micEnabled == true
 // ================================================================
 
 #define I2S_WS      7
@@ -60,37 +109,38 @@ float bandValues[NUM_BANDS];
 float bandPeaks[NUM_BANDS];
 uint8_t hueBaseMic = 0;
 
+i2s_chan_handle_t rxHandle;
+
 void setupI2S() {
-  i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = SAMPLING_FREQ,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 4,
-    .dma_buf_len = SAMPLES,
-    .use_apll = false,
-    .tx_desc_auto_clear = false,
-    .fixed_mclk = 0
-  };
+  i2s_chan_config_t chanConfig = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
+  i2s_new_channel(&chanConfig, NULL, &rxHandle);
 
-  i2s_pin_config_t pin_config = {
-    .bck_io_num = I2S_SCK,
-    .ws_io_num = I2S_WS,
-    .data_out_num = I2S_PIN_NO_CHANGE,
-    .data_in_num = I2S_SD
+  i2s_std_config_t stdConfig = {
+    .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLING_FREQ),
+    .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
+    .gpio_cfg = {
+      .mclk = I2S_GPIO_UNUSED,
+      .bclk = (gpio_num_t)I2S_SCK,
+      .ws   = (gpio_num_t)I2S_WS,
+      .dout = I2S_GPIO_UNUSED,
+      .din  = (gpio_num_t)I2S_SD,
+      .invert_flags = {
+        .mclk_inv = false,
+        .bclk_inv = false,
+        .ws_inv = false,
+      },
+    },
   };
+  stdConfig.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT; // зміни на I2S_STD_SLOT_RIGHT, якщо мікрофон на R/L підтягнутий до VDD
 
-  i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
-  i2s_set_pin(I2S_PORT, &pin_config);
+  i2s_channel_init_std_mode(rxHandle, &stdConfig);
+  i2s_channel_enable(rxHandle);
 }
 
 void readAudioAndFFT() {
   size_t bytesRead = 0;
   static int32_t buffer32[SAMPLES];
-
-  i2s_read(I2S_PORT, buffer32, sizeof(buffer32), &bytesRead, portMAX_DELAY);
+  i2s_channel_read(rxHandle, buffer32, sizeof(buffer32), &bytesRead, portMAX_DELAY);
   int samplesRead = bytesRead / sizeof(int32_t);
 
   for (int i = 0; i < samplesRead; i++) {
@@ -105,24 +155,16 @@ void readAudioAndFFT() {
 
   float freqPerBin = (float)SAMPLING_FREQ / SAMPLES;
   int usableBins = SAMPLES / 2;
-
-  float minFreq = 60.0;
-  float maxFreq = SAMPLING_FREQ / 2.0;
-  float logMin = log(minFreq);
-  float logMax = log(maxFreq);
+  float minFreq = 60.0, maxFreq = SAMPLING_FREQ / 2.0;
+  float logMin = log(minFreq), logMax = log(maxFreq);
 
   for (int b = 0; b < NUM_BANDS; b++) {
     float f0 = exp(logMin + (logMax - logMin) * b / NUM_BANDS);
     float f1 = exp(logMin + (logMax - logMin) * (b + 1) / NUM_BANDS);
     int bin0 = max(1, (int)(f0 / freqPerBin));
     int bin1 = min(usableBins - 1, (int)(f1 / freqPerBin));
-
-    float sum = 0;
-    int count = 0;
-    for (int i = bin0; i <= bin1; i++) {
-      sum += vReal[i];
-      count++;
-    }
+    float sum = 0; int count = 0;
+    for (int i = bin0; i <= bin1; i++) { sum += vReal[i]; count++; }
     float avg = count > 0 ? sum / count : 0;
     bandValues[b] = constrain(avg / 4000.0, 0.0, 1.0);
   }
@@ -130,14 +172,9 @@ void readAudioAndFFT() {
 
 void renderSpectrum() {
   int ledsPerBand = NUM_LEDS / NUM_BANDS;
-
   for (int b = 0; b < NUM_BANDS; b++) {
-    if (bandValues[b] > bandPeaks[b]) {
-      bandPeaks[b] = bandValues[b];
-    } else {
-      bandPeaks[b] -= 0.03;
-      if (bandPeaks[b] < 0) bandPeaks[b] = 0;
-    }
+    if (bandValues[b] > bandPeaks[b]) bandPeaks[b] = bandValues[b];
+    else { bandPeaks[b] -= 0.03; if (bandPeaks[b] < 0) bandPeaks[b] = 0; }
 
     int litLeds = (int)(bandPeaks[b] * ledsPerBand);
     uint8_t hue = hueBaseMic + b * (255 / NUM_BANDS);
@@ -145,7 +182,6 @@ void renderSpectrum() {
     for (int i = 0; i < ledsPerBand; i++) {
       int idx = b * ledsPerBand + i;
       if (idx >= NUM_LEDS) continue;
-
       if (i < litLeds) {
         uint8_t val = map(i, 0, ledsPerBand, 120, 255);
         leds[idx] = CHSV(hue, 255, val);
@@ -157,28 +193,18 @@ void renderSpectrum() {
   hueBaseMic += 1;
 }
 
-#else
 // ================================================================
-//                  РЕЖИМ: ДЕМО 17 ЕФЕКТІВ (БЕЗ МІКРОФОНА)
+//                        17 ДЕМО-ЕФЕКТІВ
 // ================================================================
 
 const unsigned long EFFECT_DURATION = 30000; // 30 сек на ефект
 
 void addGlitter(fract8 chanceOfGlitter) {
-  if (random8() < chanceOfGlitter) {
-    leds[random16(NUM_LEDS)] += CRGB::White;
-  }
+  if (random8() < chanceOfGlitter) leds[random16(NUM_LEDS)] += CRGB::White;
 }
 
-void fxRainbowCycle() {
-  fill_rainbow(leds, NUM_LEDS, gHue, 7);
-  gHue++;
-}
-
-void fxRainbowGlitter() {
-  fxRainbowCycle();
-  addGlitter(80);
-}
+void fxRainbowCycle() { fill_rainbow(leds, NUM_LEDS, gHue, 7); gHue++; }
+void fxRainbowGlitter() { fxRainbowCycle(); addGlitter(80); }
 
 void fxConfetti() {
   fadeToBlackBy(leds, NUM_LEDS, 10);
@@ -218,7 +244,6 @@ void fxTheaterChase() {
   static int q = 0;
   if (millis() - lastUpdate < 50) return;
   lastUpdate = millis();
-
   fadeToBlackBy(leds, NUM_LEDS, 255);
   for (int i = 0; i < NUM_LEDS; i += 3) {
     int idx = i + q;
@@ -233,17 +258,11 @@ void fxColorWipe() {
   static int pos = 0;
   static uint8_t colorIndex = 0;
   static const CRGB colors[] = {CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::Yellow, CRGB::Cyan, CRGB::Magenta};
-
   if (millis() - lastUpdate < 30) return;
   lastUpdate = millis();
-
   leds[pos] = colors[colorIndex % 6];
   pos++;
-  if (pos >= NUM_LEDS) {
-    pos = 0;
-    colorIndex++;
-    FastLED.clear();
-  }
+  if (pos >= NUM_LEDS) { pos = 0; colorIndex++; FastLED.clear(); }
 }
 
 void fxLarsonScanner() {
@@ -252,7 +271,6 @@ void fxLarsonScanner() {
   static int dir = 1;
   if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
-
   fadeToBlackBy(leds, NUM_LEDS, 60);
   leds[pos] = CRGB::Red;
   pos += dir;
@@ -261,56 +279,32 @@ void fxLarsonScanner() {
 
 void fxFire2012() {
   static byte heat[NUM_LEDS];
-  const byte cooling = 55;
-  const byte sparking = 120;
-
-  for (int i = 0; i < NUM_LEDS; i++) {
-    heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2));
-  }
-  for (int k = NUM_LEDS - 1; k >= 2; k--) {
-    heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
-  }
-  if (random8() < sparking) {
-    int y = random8(7);
-    heat[y] = qadd8(heat[y], random8(160, 255));
-  }
-  for (int j = 0; j < NUM_LEDS; j++) {
-    leds[j] = HeatColor(heat[j]);
-  }
+  const byte cooling = 55, sparking = 120;
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2));
+  for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
+  if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
+  for (int j = 0; j < NUM_LEDS; j++) leds[j] = HeatColor(heat[j]);
 }
 
 void fxMeteorRain() {
   static unsigned long lastUpdate = 0;
   static int meteorPos = 0;
-  const byte meteorSize = 8;
-  const byte meteorTrailDecay = 64;
-
+  const byte meteorSize = 8, meteorTrailDecay = 64;
   if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
-
   for (int i = 0; i < NUM_LEDS; i++) {
-    if (random8(10) > 5) {
-      leds[i].fadeToBlackBy(meteorTrailDecay);
-    }
+    if (random8(10) > 5) leds[i].fadeToBlackBy(meteorTrailDecay);
   }
   for (int j = 0; j < meteorSize; j++) {
-    if (meteorPos - j >= 0 && meteorPos - j < NUM_LEDS) {
-      leds[meteorPos - j] = CHSV(gHue, 255, 255);
-    }
+    if (meteorPos - j >= 0 && meteorPos - j < NUM_LEDS) leds[meteorPos - j] = CHSV(gHue, 255, 255);
   }
   meteorPos++;
-  if (meteorPos >= NUM_LEDS + meteorSize) {
-    meteorPos = 0;
-    gHue += 40;
-  }
+  if (meteorPos >= NUM_LEDS + meteorSize) { meteorPos = 0; gHue += 40; }
 }
 
 void fxTwinkleRandom() {
   fadeToBlackBy(leds, NUM_LEDS, 10);
-  if (random8() < 80) {
-    int pos = random16(NUM_LEDS);
-    leds[pos] = CHSV(random8(), 200, 255);
-  }
+  if (random8() < 80) leds[random16(NUM_LEDS)] = CHSV(random8(), 200, 255);
 }
 
 void fxBreathing() {
@@ -333,7 +327,6 @@ void fxComet() {
   static int pos = 0;
   if (millis() - lastUpdate < 25) return;
   lastUpdate = millis();
-
   fadeToBlackBy(leds, NUM_LEDS, 90);
   leds[pos] = CHSV(gHue, 255, 255);
   pos = (pos + 1) % NUM_LEDS;
@@ -345,7 +338,6 @@ void fxStrobe() {
   static bool on = false;
   if (millis() - lastUpdate < 100) return;
   lastUpdate = millis();
-
   on = !on;
   fill_solid(leds, NUM_LEDS, on ? CRGB(CHSV(gHue, 255, 255)) : CRGB::Black);
   if (on) gHue += 15;
@@ -368,12 +360,241 @@ EffectFunc effects[] = {
   fxMeteorRain, fxTwinkleRandom, fxBreathing, fxPlasma, fxComet,
   fxStrobe, fxRunningLights
 };
-const uint8_t NUM_EFFECTS = sizeof(effects) / sizeof(effects[0]);
 
+const char* effectNames[] = {
+  "Райдужний перелив", "Райдуга з блискітками", "Конфеті", "Синелон", "Пульс (BPM)",
+  "Жонглювання", "Театральна доріжка", "Color wipe", "Larson scanner", "Вогонь (Fire2012)",
+  "Метеоритний дощ", "Мерехтіння зірок", "Дихання", "Плазма", "Комета",
+  "Стробоскоп", "Хвиля (running lights)"
+};
+
+const uint8_t NUM_EFFECTS = sizeof(effects) / sizeof(effects[0]);
 uint8_t currentEffect = 0;
 unsigned long lastSwitch = 0;
 
-#endif // USE_MICROPHONE
+// ================================================================
+//                          WIFI / OTA / WEB
+// ================================================================
+
+void setupWiFi() {
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180); // 3 хв на налаштування, потім працює далі офлайн демо-режимом
+  bool connected = wm.autoConnect("LightMusic-Setup");
+  if (connected) {
+    Serial.print("WiFi підключено, IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
+  }
+}
+
+void setupOTA() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  ArduinoOTA.begin();
+  Serial.println("ArduinoOTA готовий (заливка прошивки по WiFi з PlatformIO)");
+}
+
+const char PAGE_HTML[] PROGMEM = R"HTML(
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Light_music</title>
+<style>
+  body { font-family: sans-serif; background:#111; color:#eee; margin:0; padding:16px; }
+  h1 { font-size:20px; }
+  #status { margin-bottom:16px; padding:10px; background:#222; border-radius:8px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap:8px; }
+  button { padding:10px; border:none; border-radius:8px; background:#333; color:#eee; cursor:pointer; }
+  button.active { background:#3a7; color:#000; }
+  .row { margin:10px 0; display:flex; align-items:center; gap:10px; }
+</style>
+</head>
+<body>
+<h1>Light_music</h1>
+<div id="status">Завантаження...</div>
+
+<div class="row">
+  <label><input type="checkbox" id="micToggle"> Мікрофон (світломузика)</label>
+</div>
+<div class="row">
+  <button onclick="setAuto()">Авто-перемикання ефектів</button>
+  <button onclick="resetWifi()" style="background:#733;">Змінити WiFi</button>
+  <button onclick="reboot()" style="background:#753;">Перезавантажити плату</button>
+</div>
+
+<div class="grid" id="effectGrid"></div>
+
+<script>
+const EFFECT_NAMES = REPLACE_NAMES;
+const loadStatus = async () => {
+  const r = await fetch('/status');
+  const s = await r.json();
+  document.getElementById('status').innerText =
+    `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'} | v${s.version}`;
+  document.getElementById('micToggle').checked = s.mic;
+  document.querySelectorAll('.grid button').forEach((b,i)=>{
+    b.classList.toggle('active', !s.mic && i === s.index);
+  });
+};
+const buildGrid = () => {
+  const grid = document.getElementById('effectGrid');
+  EFFECT_NAMES.forEach((name, i) => {
+    const btn = document.createElement('button');
+    btn.innerText = name;
+    btn.onclick = () => fetch('/effect?i=' + i).then(loadStatus);
+    grid.appendChild(btn);
+  });
+};
+const setAuto = () => { fetch('/auto').then(loadStatus); };
+const resetWifi = () => {
+  if (confirm('Скинути WiFi-налаштування? Плата перезавантажиться і підніме точку доступу LightMusic-Setup.')) {
+    fetch('/resetwifi');
+    document.getElementById('status').innerText = 'Скидаю WiFi, плата перезавантажується...';
+  }
+};
+const reboot = () => {
+  if (confirm('Перезавантажити плату?')) {
+    fetch('/reboot');
+    document.getElementById('status').innerText = 'Перезавантажуюсь...';
+  }
+};
+document.getElementById('micToggle').addEventListener('change', (e) => {
+  fetch('/mic?on=' + (e.target.checked ? '1' : '0')).then(loadStatus);
+});
+buildGrid();
+loadStatus();
+setInterval(loadStatus, 2000);
+</script>
+</body>
+</html>
+)HTML";
+
+void handleRoot() {
+  // Підставляємо список назв ефектів у JS-масив прямо в HTML
+  String page = FPSTR(PAGE_HTML);
+  String namesJs = "[";
+  for (int i = 0; i < NUM_EFFECTS; i++) {
+    namesJs += "\"" + String(effectNames[i]) + "\"";
+    if (i < NUM_EFFECTS - 1) namesJs += ",";
+  }
+  namesJs += "]";
+  page.replace("REPLACE_NAMES", namesJs);
+  server.send(200, "text/html", page);
+}
+
+void handleStatus() {
+  JsonDocument doc;
+  doc["effect"] = micEnabled ? "Світломузика (мікрофон)" : effectNames[currentEffect];
+  doc["index"] = currentEffect;
+  doc["mic"] = micEnabled;
+  doc["auto"] = autoCycle;
+  doc["version"] = FIRMWARE_VERSION;
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
+}
+
+void handleSetEffect() {
+  if (server.hasArg("i")) {
+    int i = server.arg("i").toInt();
+    if (i >= 0 && i < NUM_EFFECTS) {
+      currentEffect = i;
+      autoCycle = false;
+      micEnabled = false;
+      FastLED.clear();
+      Serial.printf("[web] Обрано ефект вручну: %s\n", effectNames[i]);
+    }
+  }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleSetAuto() {
+  autoCycle = true;
+  micEnabled = false;
+  lastSwitch = millis();
+  Serial.println("[web] Увімкнено авто-перемикання ефектів");
+  server.send(200, "text/plain", "OK");
+}
+
+void handleMic() {
+  if (server.hasArg("on")) {
+    micEnabled = server.arg("on") == "1";
+    if (micEnabled) autoCycle = false;
+    Serial.printf("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
+  }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleReboot() {
+  server.send(200, "text/plain", "OK, перезавантажуюсь...");
+  delay(200);
+  ESP.restart();
+}
+
+void handleResetWifi() {
+  server.send(200, "text/plain", "OK, перезавантажуюсь...");
+  delay(200); // встигнути відправити відповідь перед перезавантаженням
+  WiFiManager wm;
+  wm.resetSettings();
+  ESP.restart();
+}
+
+void setupWebServer() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  server.on("/", handleRoot);
+  server.on("/status", handleStatus);
+  server.on("/effect", handleSetEffect);
+  server.on("/auto", handleSetAuto);
+  server.on("/mic", handleMic);
+  server.on("/resetwifi", handleResetWifi);
+  server.on("/reboot", handleReboot);
+  server.begin();
+  Serial.println("Веб-сервер запущений — відкрий IP плати в браузері");
+}
+
+// ---------- HTTP OTA: перевірка нової версії на Synology ----------
+void checkFirmwareUpdate() {
+  static unsigned long lastCheck = 0;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (lastCheck != 0 && millis() - lastCheck < UPDATE_CHECK_INTERVAL) return;
+  lastCheck = millis();
+
+  WiFiClientSecure client;
+  client.setInsecure(); // ОК для Let's Encrypt теж; прибери й додай сертифікат, якщо хочеш строгу перевірку
+
+  HTTPClient http;
+  if (!http.begin(client, FIRMWARE_UPDATE_URL)) {
+    Serial.println("[OTA] Не вдалось відкрити з'єднання для перевірки версії");
+    return;
+  }
+
+  int code = http.GET();
+  if (code == 200) {
+    String payload = http.getString();
+    JsonDocument doc;
+    if (deserializeJson(doc, payload) == DeserializationError::Ok) {
+      String newVersion = doc["version"].as<String>();
+      String binUrl = doc["url"].as<String>();
+      if (newVersion.length() && newVersion != FIRMWARE_VERSION) {
+        Serial.printf("[OTA] Знайдено нову версію %s (поточна %s), оновлююсь...\n",
+                      newVersion.c_str(), FIRMWARE_VERSION);
+        t_httpUpdate_return ret = httpUpdate.update(client, binUrl);
+        if (ret == HTTP_UPDATE_FAILED) {
+          Serial.printf("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
+        }
+        // при успіху плата сама перезавантажиться
+      } else {
+        Serial.println("[OTA] Версія актуальна");
+      }
+    }
+  } else {
+    Serial.printf("[OTA] Не вдалось перевірити версію, код: %d\n", code);
+  }
+  http.end();
+}
 
 // ================================================================
 //                          SETUP / LOOP
@@ -381,36 +602,69 @@ unsigned long lastSwitch = 0;
 
 void setup() {
   Serial.begin(115200);
+  Serial.printf("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
+
+  pinMode(WIFI_RESET_BUTTON_PIN, INPUT_PULLUP);
+
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
   FastLED.clear();
   FastLED.show();
 
-#if USE_MICROPHONE
+  setupWiFi();
+  setupOTA();
+  setupWebServer();
   setupI2S();
   for (int i = 0; i < NUM_BANDS; i++) bandPeaks[i] = 0;
-  Serial.println("Режим: світломузика (мікрофон увімкнено)");
-#else
+
   lastSwitch = millis();
-  Serial.printf("Режим: демо-ефекти. Ефект 1/%d: fxRainbowCycle\n", NUM_EFFECTS);
-#endif
+  Serial.printf("Демо-режим. Ефект 1/%d: %s\n", NUM_EFFECTS, effectNames[0]);
 }
 
 void loop() {
-#if USE_MICROPHONE
-  readAudioAndFFT();
-  renderSpectrum();
-  FastLED.show();
-#else
-  unsigned long now = millis();
-  if (now - lastSwitch >= EFFECT_DURATION) {
-    lastSwitch = now;
-    currentEffect = (currentEffect + 1) % NUM_EFFECTS;
-    FastLED.clear();
-    Serial.printf("Перемикаю на ефект %d/%d\n", currentEffect + 1, NUM_EFFECTS);
+  // ---- Фізична кнопка: утримання 5 сек скидає WiFi ----
+  bool buttonPressed = (digitalRead(WIFI_RESET_BUTTON_PIN) == LOW);
+  if (buttonPressed && !buttonWasPressed) {
+    buttonPressStart = millis();
   }
-  effects[currentEffect]();
+  if (buttonPressed && buttonWasPressed) {
+    if (millis() - buttonPressStart >= WIFI_RESET_HOLD_MS) {
+      Serial.println("[кнопка] Утримання 5 сек — скидаю WiFi і перезавантажуюсь");
+      WiFiManager wm;
+      wm.resetSettings();
+      delay(100);
+      ESP.restart();
+    }
+  }
+  buttonWasPressed = buttonPressed;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    server.handleClient();
+    ArduinoOTA.handle();
+    checkFirmwareUpdate();
+  }
+
+  if (micEnabled) {
+    readAudioAndFFT();
+    renderSpectrum();
+  } else {
+    unsigned long now = millis();
+    if (autoCycle && now - lastSwitch >= EFFECT_DURATION) {
+      lastSwitch = now;
+      currentEffect = (currentEffect + 1) % NUM_EFFECTS;
+      FastLED.clear();
+      Serial.printf("Перемикаю на ефект %d/%d: %s\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect]);
+    }
+    EVERY_N_MILLISECONDS(5000) {
+      if (autoCycle) {
+        unsigned long elapsed = millis() - lastSwitch;
+        unsigned long remainingSec = (EFFECT_DURATION > elapsed) ? (EFFECT_DURATION - elapsed) / 1000 : 0;
+        Serial.printf("До зміни ефекту (%s): %lu сек\n", effectNames[currentEffect], remainingSec);
+      }
+    }
+    effects[currentEffect]();
+  }
+
   FastLED.show();
   delay(10);
-#endif
 }
