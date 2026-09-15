@@ -347,7 +347,7 @@ void fxStrobe() {
   lastUpdate = millis();
 
   on = !on;
-  fill_solid(leds, NUM_LEDS, on ? CHSV(gHue, 255, 255) : CRGB::Black);
+  fill_solid(leds, NUM_LEDS, on ? CRGB(CHSV(gHue, 255, 255)) : CRGB::Black);
   if (on) gHue += 15;
 }
 
