@@ -1,63 +1,23 @@
-/*
-  ESP32-C3 + WS2812B — СВІТЛОМУЗИКА з WiFi, веб-керуванням та OTA
-
-  Можливості:
-    - 17 демо-ефектів, автоперемикання кожні 30 сек (можна вимкнути з вебсторінки)
-    - Світломузика з мікрофона (I2S INMP441 + FFT) — вмикається/вимикається з вебсторінки
-    - Веб-сторінка керування прямо з плати (відкрий IP плати в браузері)
-    - WiFiManager: при першому вмиканні (або якщо WiFi не знайдено) плата підіймає
-      власну точку доступу "LightMusic-Setup" — підключись до неї з телефону,
-      відкриється сторінка вибору домашньої мережі й пароля. Дані зберігаються,
-      наступного разу підключається сама.
-    - ArduinoOTA — заливка прошивки по WiFi прямо з PlatformIO (для розробки)
-    - HTTP OTA — раз на годину плата перевіряє version.json на твоєму Synology,
-      і якщо там інша версія — сама завантажує і прошиває firmware.bin
-
-  Бібліотеки (додай у platformio.ini lib_deps):
-    - fastled/FastLED @ ^3.7.0
-    - kosme/arduinoFFT @ ^2.0.0
-    - tzapu/WiFiManager @ ^2.0.17
-    - bblanchon/ArduinoJson @ ^7.0.0
-
-  Піни (зміни під свою плату):
-    LED_PIN    = 4   -> DIN стрічки (через резистор ~330 Ом)
-    I2S_SCK    = 6   -> SCK мікрофона
-    I2S_WS     = 7   -> WS (LRCL) мікрофона
-    I2S_SD     = 5   -> SD (DOUT) мікрофона
-
-  === НАЛАШТУВАННЯ НА SYNOLOGY ===
-  Постав пакет Web Station (або просто розшар папку через File Station з веб-доступом).
-  Створи папку /firmware з двома файлами:
-
-    version.json:
-      {
-        "version": "1.2.0",
-        "url": "https://твій-ddns.synology.me:ПОРТ/firmware/firmware.bin"
-      }
-
-    firmware.bin — сам скомпільований бінарник (лежить після Build у
-      .pio/build/esp32-c3-devkitm-1/firmware.bin, скопіюй туди вручну після кожної збірки)
-
-  Онови FIRMWARE_UPDATE_URL нижче під свій реальний DDNS-адрес і порт.
-*/
-
-// ======================= ВЕРСІЯ ПРОШИВКИ =======================
+# 1 "C:\\Users\\AVL\\AppData\\Local\\Temp\\tmpbvqo79_4"
+#include <Arduino.h>
+# 1 "D:/Arduino_project/Light_music/src/Light_music.ino"
+# 45 "D:/Arduino_project/Light_music/src/Light_music.ino"
 #define FIRMWARE_VERSION "1.5.1"
-// Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
-// інакше плата вирішить, що оновлення не потрібне.
-// ===================================================================
 
-// ======================= НАЛАШТУВАННЯ WIFI/OTA =======================
+
+
+
+
 const char* OTA_HOSTNAME = "light-music";
 const char* FIRMWARE_UPDATE_URL = "https://mystation.pp.ua:85/Light_music/firmware/version.json";
-const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годину (мс)
+const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL;
 
-// ======================= GETSONGBPM.COM API =======================
-// getsongbpm.com/api -> реєстрація -> API-ключ (без OAuth, простий ключ)
-// Сам ключ лежить в getsongbpm_secret.h — НЕ комітиться в Git (див. .gitignore)
+
+
+
 #include "getsongbpm_secret.h"
-// =====================================================================
-// ===================================================================
+
+
 
 #include <FastLED.h>
 #include <WiFi.h>
@@ -73,42 +33,42 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 #include <driver/i2s_std.h>
 #include <ArduinoFFT.h>
 
-// ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
-#define LED_PIN     4
-#define NUM_LEDS    60          // <-- кількість діодів у стрічці
-#define LED_TYPE    WS2812B
+
+#define LED_PIN 4
+#define NUM_LEDS 60
+#define LED_TYPE WS2812B
 #define COLOR_ORDER GRB
 
-uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 120;
 
-// ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
-#define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
-#define WIFI_RESET_HOLD_MS 5000   // утримувати 5 сек, щоб скинути WiFi
+
+#define WIFI_RESET_BUTTON_PIN 9
+#define WIFI_RESET_HOLD_MS 5000
 unsigned long buttonPressStart = 0;
 bool buttonWasPressed = false;
 
 CRGB leds[NUM_LEDS];
 uint8_t gHue = 0;
 
-// ---------- РЕЖИМ РОБОТИ (керується з вебсторінки) ----------
-bool micEnabled = false;   // false = демо-ефекти, true = світломузика з мікрофона
-bool autoCycle  = true;    // false = ефект зафіксований вручну через вебсторінку
+
+bool micEnabled = false;
+bool autoCycle = true;
 
 WebServer server(80);
 
-// ================================================================
-//                  МІКРОФОН (I2S) + FFT — завжди в прошивці,
-//                  але активний тільки коли micEnabled == true
-// ================================================================
 
-#define I2S_WS      7
-#define I2S_SD      5
-#define I2S_SCK     6
-#define I2S_PORT    I2S_NUM_0
 
-#define SAMPLES         512
-#define SAMPLING_FREQ   40000
-#define NUM_BANDS       8
+
+
+
+#define I2S_WS 7
+#define I2S_SD 5
+#define I2S_SCK 6
+#define I2S_PORT I2S_NUM_0
+
+#define SAMPLES 512
+#define SAMPLING_FREQ 40000
+#define NUM_BANDS 8
 
 double vReal[SAMPLES];
 double vImag[SAMPLES];
@@ -119,7 +79,47 @@ float bandPeaks[NUM_BANDS];
 uint8_t hueBaseMic = 0;
 
 i2s_chan_handle_t rxHandle;
-
+void setupI2S();
+void readAudioAndFFT();
+void renderSpectrum();
+void addGlitter(fract8 chanceOfGlitter);
+void fxRainbowCycle();
+void fxRainbowGlitter();
+void fxConfetti();
+void fxSinelon();
+void fxBpm();
+void fxJuggle();
+void fxTheaterChase();
+void fxColorWipe();
+void fxLarsonScanner();
+void fxFire2012();
+void fxMeteorRain();
+void fxTwinkleRandom();
+void fxBreathing();
+void fxPlasma();
+void fxComet();
+void fxStrobe();
+void fxRunningLights();
+void setupWiFi();
+void setupOTA();
+void setupMDNS();
+void handleRoot();
+void handleStatus();
+void handleSetEffect();
+void handleSetAuto();
+void handleMic();
+void handleReboot();
+void handleResetWifi();
+void handleBrightness();
+void handleSearchSong();
+void handleCheckUpdate();
+void setupWebServer();
+String urlEncode(const String &str);
+bool searchSongBpmAndApply(const String &query, String &outName, String &outArtist, float &outBpm, String &outError);
+void checkFirmwareUpdate();
+void setup();
+void loop();
+#line 123 "D:/Arduino_project/Light_music/src/Light_music.ino"
 void setupI2S() {
   i2s_chan_config_t chanConfig = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
   i2s_new_channel(&chanConfig, NULL, &rxHandle);
@@ -130,9 +130,9 @@ void setupI2S() {
     .gpio_cfg = {
       .mclk = I2S_GPIO_UNUSED,
       .bclk = (gpio_num_t)I2S_SCK,
-      .ws   = (gpio_num_t)I2S_WS,
+      .ws = (gpio_num_t)I2S_WS,
       .dout = I2S_GPIO_UNUSED,
-      .din  = (gpio_num_t)I2S_SD,
+      .din = (gpio_num_t)I2S_SD,
       .invert_flags = {
         .mclk_inv = false,
         .bclk_inv = false,
@@ -140,7 +140,7 @@ void setupI2S() {
       },
     },
   };
-  stdConfig.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT; // зміни на I2S_STD_SLOT_RIGHT, якщо мікрофон на R/L підтягнутий до VDD
+  stdConfig.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
 
   i2s_channel_init_std_mode(rxHandle, &stdConfig);
   i2s_channel_enable(rxHandle);
@@ -202,11 +202,11 @@ void renderSpectrum() {
   hueBaseMic += 1;
 }
 
-// ================================================================
-//                        17 ДЕМО-ЕФЕКТІВ
-// ================================================================
 
-const unsigned long EFFECT_DURATION = 30000; // 30 сек на ефект
+
+
+
+const unsigned long EFFECT_DURATION = 30000;
 
 void addGlitter(fract8 chanceOfGlitter) {
   if (random8() < chanceOfGlitter) leds[random16(NUM_LEDS)] += CRGB::White;
@@ -229,7 +229,7 @@ void fxSinelon() {
   gHue++;
 }
 
-float songBpm = 62; // за замовчуванням; оновлюється пошуком пісні через Spotify
+float songBpm = 62;
 
 void fxBpm() {
   CRGBPalette16 palette = PartyColors_p;
@@ -387,27 +387,19 @@ String lastUpdateCheckResult = "ще не перевірялось";
 Preferences prefs;
 
 unsigned long lastWifiReconnectAttempt = 0;
-const unsigned long WIFI_RECONNECT_INTERVAL = 30000; // спроба раз на 30 сек, поки WiFi відсутній
+const unsigned long WIFI_RECONNECT_INTERVAL = 30000;
 bool wasWifiConnected = false;
-
-// ================================================================
-//                          WIFI / OTA / WEB
-// ================================================================
-
-// ======================= СТАТИЧНИЙ WIFI (пріоритетний) =======================
-// Якщо задано — плата спершу пробує підключитись сюди напряму (швидко, без порталу).
-// Якщо не вдасться за WIFI_STATIC_TIMEOUT_MS — впаде на WiFiManager (портал LightMusic-Setup).
-// Залиш порожніми ("") обидва рядки, якщо статичний WiFi не потрібен.
+# 401 "D:/Arduino_project/Light_music/src/Light_music.ino"
 const char* WIFI_STATIC_SSID = "ТВОЯ_МЕРЕЖА";
 const char* WIFI_STATIC_PASSWORD = "ТВІЙ_ПАРОЛЬ";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
-// ================================================================================
+
 
 void setupWiFi() {
   WiFi.persistent(true);
   WiFi.setAutoReconnect(true);
 
-  // Спершу пробуємо статичний WiFi, якщо він заданий (не порожній)
+
   if (strlen(WIFI_STATIC_SSID) > 0) {
     Serial.printf("[WiFi] Пробую статичне підключення до \"%s\"...\n", WIFI_STATIC_SSID);
     WiFi.begin(WIFI_STATIC_SSID, WIFI_STATIC_PASSWORD);
@@ -426,7 +418,7 @@ void setupWiFi() {
   }
 
   WiFiManager wm;
-  wm.setConfigPortalTimeout(180); // 3 хв на налаштування, потім працює далі офлайн демо-режимом
+  wm.setConfigPortalTimeout(180);
   bool connected = wm.autoConnect("LightMusic-Setup");
   if (connected) {
     Serial.print("WiFi підключено, IP: ");
@@ -612,7 +604,7 @@ setInterval(loadStatus, 2000);
 )HTML";
 
 void handleRoot() {
-  // Підставляємо список назв ефектів у JS-масив прямо в HTML
+
   String page = FPSTR(PAGE_HTML);
   String namesJs = "[";
   for (int i = 0; i < NUM_EFFECTS; i++) {
@@ -677,7 +669,7 @@ void handleReboot() {
 
 void handleResetWifi() {
   server.send(200, "text/plain", "OK, перезавантажуюсь...");
-  delay(200); // встигнути відправити відповідь перед перезавантаженням
+  delay(200);
   WiFiManager wm;
   wm.resetSettings();
   ESP.restart();
@@ -710,7 +702,7 @@ void handleSearchSong() {
   doc["ok"] = ok;
   if (ok) {
     songBpm = bpm;
-    currentEffect = 4; // fxBpm — 5-й у списку effects[]
+    currentEffect = 4;
     autoCycle = false;
     micEnabled = false;
     FastLED.clear();
@@ -748,7 +740,7 @@ void setupWebServer() {
   Serial.println("Веб-сервер запущений — відкрий IP плати в браузері");
 }
 
-// ---------- GETSONGBPM: пошук пісні і темп, одним запитом, без OAuth ----------
+
 String urlEncode(const String &str) {
   String encoded = "";
   char buf[4];
@@ -783,7 +775,7 @@ bool searchSongBpmAndApply(const String &query, String &outName, String &outArti
 
   String payload = http.getString();
   http.end();
-  Serial.println("[GetSongBPM] Відповідь: " + payload); // для налагодження точної структури JSON при першому запуску
+  Serial.println("[GetSongBPM] Відповідь: " + payload);
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload);
@@ -799,7 +791,7 @@ bool searchSongBpmAndApply(const String &query, String &outName, String &outArti
   return outBpm > 0;
 }
 
-// ---------- HTTP OTA: перевірка нової версії на Synology ----------
+
 void checkFirmwareUpdate() {
   static unsigned long lastCheck = 0;
   if (WiFi.status() != WL_CONNECTED) return;
@@ -810,7 +802,7 @@ void checkFirmwareUpdate() {
   forceUpdateCheck = false;
 
   WiFiClientSecure client;
-  client.setInsecure(); // ОК для Let's Encrypt теж; прибери й додай сертифікат, якщо хочеш строгу перевірку
+  client.setInsecure();
 
   HTTPClient http;
   if (!http.begin(client, FIRMWARE_UPDATE_URL)) {
@@ -843,7 +835,7 @@ void checkFirmwareUpdate() {
           Serial.printf("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
           lastUpdateCheckResult = "помилка оновлення: " + String(httpUpdate.getLastErrorString().c_str());
         }
-        // при успіху плата сама перезавантажиться
+
       } else {
         Serial.println("[OTA] Версія актуальна");
         lastUpdateCheckResult = "версія актуальна (v" + String(FIRMWARE_VERSION) + ")";
@@ -858,9 +850,9 @@ void checkFirmwareUpdate() {
   http.end();
 }
 
-// ================================================================
-//                          SETUP / LOOP
-// ================================================================
+
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -894,7 +886,7 @@ void setup() {
 }
 
 void loop() {
-  // ---- Фізична кнопка: утримання 5 сек скидає WiFi ----
+
   bool buttonPressed = (digitalRead(WIFI_RESET_BUTTON_PIN) == LOW);
   if (buttonPressed && !buttonWasPressed) {
     buttonPressStart = millis();
@@ -912,8 +904,8 @@ void loop() {
 
   if (WiFi.status() == WL_CONNECTED) {
     if (!wasWifiConnected) {
-      // Щойно відновилось з'єднання (не просто перший запуск) — перезапускаємо
-      // mDNS/OTA, бо вони інколи "не оживають" самі після реального обриву
+
+
       Serial.print("[WiFi] Підключення відновлено, IP: ");
       Serial.println(WiFi.localIP());
       setupMDNS();
@@ -925,8 +917,8 @@ void loop() {
     checkFirmwareUpdate();
   } else {
     wasWifiConnected = false;
-    // WiFi відпав — пробуємо перепідключитись раз на WIFI_RECONNECT_INTERVAL,
-    // не блокуючи основний цикл (ефекти й далі йдуть, поки чекаємо мережу)
+
+
     if (millis() - lastWifiReconnectAttempt >= WIFI_RECONNECT_INTERVAL) {
       lastWifiReconnectAttempt = millis();
       Serial.println("[WiFi] З'єднання втрачено, пробую перепідключитись...");
