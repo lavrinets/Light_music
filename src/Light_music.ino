@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.5.4"
+#define FIRMWARE_VERSION "1.6.2"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -398,8 +398,8 @@ bool wasWifiConnected = false;
 // Якщо задано — плата спершу пробує підключитись сюди напряму (швидко, без порталу).
 // Якщо не вдасться за WIFI_STATIC_TIMEOUT_MS — впаде на WiFiManager (портал LightMusic-Setup).
 // Залиш порожніми ("") обидва рядки, якщо статичний WiFi не потрібен.
-const char* WIFI_STATIC_SSID = "ТВОЯ_МЕРЕЖА";
-const char* WIFI_STATIC_PASSWORD = "ТВІЙ_ПАРОЛЬ";
+const char* WIFI_STATIC_SSID = "";
+const char* WIFI_STATIC_PASSWORD = "";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
