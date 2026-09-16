@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.5.1"
+#define FIRMWARE_VERSION "1.5.4"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -545,13 +545,22 @@ const searchSong = () => {
   fetch('/search?q=' + encodeURIComponent(q))
     .then(r => r.json())
     .then(res => {
-      if (res.ok) {
-        document.getElementById('songResult').innerText =
-          `🎵 ${res.artist} — ${res.name} (${res.bpm.toFixed(0)} BPM)`;
-      } else {
+      if (!res.ok) {
         document.getElementById('songResult').innerText = 'Помилка: ' + res.error;
+        return;
       }
-      loadStatus();
+      const container = document.getElementById('songResult');
+      container.innerHTML = '';
+      res.results.forEach(item => {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px; cursor:pointer; border-bottom:1px solid #333;';
+        row.innerText = `🎵 ${item.artist} — ${item.title} (${item.bpm.toFixed(0)} BPM)`;
+        row.onclick = () => {
+          fetch('/applysong?bpm=' + item.bpm).then(loadStatus);
+          container.innerHTML = `Застосовано: ${item.artist} — ${item.title} (${item.bpm.toFixed(0)} BPM)`;
+        };
+        container.appendChild(row);
+      });
     })
     .catch(() => {
       document.getElementById('songResult').innerText = 'Помилка з\'єднання';
@@ -702,29 +711,35 @@ void handleSearchSong() {
   }
   String query = server.arg("q");
 
-  String name, artist, error;
-  float bpm = 0;
-  bool ok = searchSongBpmAndApply(query, name, artist, bpm, error);
+  String resultsJson, error;
+  bool ok = searchSongBpmCandidates(query, resultsJson, error);
 
-  JsonDocument doc;
-  doc["ok"] = ok;
   if (ok) {
-    songBpm = bpm;
-    currentEffect = 4; // fxBpm — 5-й у списку effects[]
-    autoCycle = false;
-    micEnabled = false;
-    FastLED.clear();
-    doc["name"] = name;
-    doc["artist"] = artist;
-    doc["bpm"] = bpm;
-    Serial.printf("[GetSongBPM] %s — %s, BPM: %.1f\n", artist.c_str(), name.c_str(), bpm);
+    String out = "{\"ok\":true,\"results\":" + resultsJson + "}";
+    server.send(200, "application/json", out);
   } else {
+    JsonDocument doc;
+    doc["ok"] = false;
     doc["error"] = error;
     Serial.println("[GetSongBPM] Помилка: " + error);
+    String out;
+    serializeJson(doc, out);
+    server.send(200, "application/json", out);
   }
-  String out;
-  serializeJson(doc, out);
-  server.send(200, "application/json", out);
+}
+
+void handleApplySong() {
+  if (!server.hasArg("bpm")) {
+    server.send(400, "text/plain", "no bpm");
+    return;
+  }
+  songBpm = server.arg("bpm").toFloat();
+  currentEffect = 4; // fxBpm — 5-й у списку effects[]
+  autoCycle = false;
+  micEnabled = false;
+  FastLED.clear();
+  Serial.printf("[GetSongBPM] Застосовано темп: %.1f BPM\n", songBpm);
+  server.send(200, "text/plain", "OK");
 }
 
 void handleCheckUpdate() {
@@ -742,6 +757,7 @@ void setupWebServer() {
   server.on("/brightness", handleBrightness);
   server.on("/checkupdate", handleCheckUpdate);
   server.on("/search", handleSearchSong);
+  server.on("/applysong", handleApplySong);
   server.on("/resetwifi", handleResetWifi);
   server.on("/reboot", handleReboot);
   server.begin();
@@ -766,13 +782,13 @@ String urlEncode(const String &str) {
   return encoded;
 }
 
-bool searchSongBpmAndApply(const String &query, String &outName, String &outArtist, float &outBpm, String &outError) {
+bool searchSongBpmCandidates(const String &query, String &outJson, String &outError) {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
 
   String url = "https://api.getsong.co/search/?type=song&lookup="
-                + urlEncode(query) + "&api_key=" + String(GETSONGBPM_API_KEY);
+                + urlEncode(query) + "&limit=8&api_key=" + String(GETSONGBPM_API_KEY);
   http.begin(client, url);
   int code = http.GET();
   if (code != 200) {
@@ -783,7 +799,7 @@ bool searchSongBpmAndApply(const String &query, String &outName, String &outArti
 
   String payload = http.getString();
   http.end();
-  Serial.println("[GetSongBPM] Відповідь: " + payload); // для налагодження точної структури JSON при першому запуску
+  Serial.println("[GetSongBPM] Відповідь: " + payload); // для налагодження точної структури JSON
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload);
@@ -792,11 +808,16 @@ bool searchSongBpmAndApply(const String &query, String &outName, String &outArti
   JsonArray results = doc["search"].as<JsonArray>();
   if (results.isNull() || results.size() == 0) { outError = "пісню не знайдено"; return false; }
 
-  JsonObject song = results[0];
-  outName = song["title"].as<String>();
-  outArtist = song["artist"]["name"].as<String>();
-  outBpm = song["tempo"].as<float>();
-  return outBpm > 0;
+  JsonDocument outDoc;
+  JsonArray outArr = outDoc.to<JsonArray>();
+  for (JsonObject song : results) {
+    JsonObject item = outArr.add<JsonObject>();
+    item["title"] = song["title"].as<String>();
+    item["artist"] = song["artist"]["name"].as<String>();
+    item["bpm"] = song["tempo"].as<float>();
+  }
+  serializeJson(outDoc, outJson);
+  return true;
 }
 
 // ---------- HTTP OTA: перевірка нової версії на Synology ----------
