@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.6.7"
+#define FIRMWARE_VERSION "1.6.8"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -612,11 +612,11 @@ document.getElementById('micToggle').addEventListener('change', (e) => {
   fetch('/mic?on=' + (e.target.checked ? '1' : '0')).then(loadStatus);
 });
 
-function updateSliderPercent(sliderId, percentId) {
+const updateSliderPercent = (sliderId, percentId) => {
   const el = document.getElementById(sliderId);
   const percent = Math.round((el.value - el.min) / (el.max - el.min) * 100);
   document.getElementById(percentId).innerText = percent + '%';
-}
+};
 
 let brightnessDragging = false;
 let brightnessDebounce = null;
