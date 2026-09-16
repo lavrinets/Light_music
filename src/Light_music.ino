@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.6.4"
+#define FIRMWARE_VERSION "1.6.7"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -491,12 +491,14 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
   <span>🔅</span>
   <input type="range" id="brightnessSlider" min="0" max="255" value="120">
   <span>🔆</span>
+  <span id="brightnessPercent" style="min-width:40px;">47%</span>
 </div>
 <div class="row">
   <span style="min-width:90px;">Ритм ефекту</span>
   <span>🐢</span>
   <input type="range" id="bpmSlider" min="40" max="220" value="120">
   <span>🐇</span>
+  <span id="bpmPercent" style="min-width:40px;">44%</span>
 </div>
 <div class="row">
   <button onclick="setAuto()">Авто-перемикання ефектів</button>
@@ -518,9 +520,11 @@ const loadStatus = async () => {
   document.getElementById('micToggle').checked = s.mic;
   if (!brightnessDragging) {
     document.getElementById('brightnessSlider').value = s.brightness;
+    updateSliderPercent('brightnessSlider', 'brightnessPercent');
   }
   if (!bpmDragging) {
     document.getElementById('bpmSlider').value = s.songBpm;
+    updateSliderPercent('bpmSlider', 'bpmPercent');
   }
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
@@ -608,11 +612,18 @@ document.getElementById('micToggle').addEventListener('change', (e) => {
   fetch('/mic?on=' + (e.target.checked ? '1' : '0')).then(loadStatus);
 });
 
+function updateSliderPercent(sliderId, percentId) {
+  const el = document.getElementById(sliderId);
+  const percent = Math.round((el.value - el.min) / (el.max - el.min) * 100);
+  document.getElementById(percentId).innerText = percent + '%';
+}
+
 let brightnessDragging = false;
 let brightnessDebounce = null;
 const brightnessSlider = document.getElementById('brightnessSlider');
 brightnessSlider.addEventListener('input', (e) => {
   brightnessDragging = true;
+  updateSliderPercent('brightnessSlider', 'brightnessPercent');
   clearTimeout(brightnessDebounce);
   brightnessDebounce = setTimeout(() => {
     fetch('/brightness?v=' + e.target.value);
@@ -627,6 +638,7 @@ let bpmDebounce = null;
 const bpmSlider = document.getElementById('bpmSlider');
 bpmSlider.addEventListener('input', (e) => {
   bpmDragging = true;
+  updateSliderPercent('bpmSlider', 'bpmPercent');
   clearTimeout(bpmDebounce);
   bpmDebounce = setTimeout(() => {
     fetch('/applysong?bpm=' + e.target.value);
