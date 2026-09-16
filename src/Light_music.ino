@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.6.3"
+#define FIRMWARE_VERSION "1.6.4"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -487,9 +487,16 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
   <label><input type="checkbox" id="micToggle"> Мікрофон (світломузика)</label>
 </div>
 <div class="row">
+  <span style="min-width:90px;">Яскравість</span>
   <span>🔅</span>
   <input type="range" id="brightnessSlider" min="0" max="255" value="120">
   <span>🔆</span>
+</div>
+<div class="row">
+  <span style="min-width:90px;">Ритм ефекту</span>
+  <span>🐢</span>
+  <input type="range" id="bpmSlider" min="40" max="220" value="120">
+  <span>🐇</span>
 </div>
 <div class="row">
   <button onclick="setAuto()">Авто-перемикання ефектів</button>
@@ -511,6 +518,9 @@ const loadStatus = async () => {
   document.getElementById('micToggle').checked = s.mic;
   if (!brightnessDragging) {
     document.getElementById('brightnessSlider').value = s.brightness;
+  }
+  if (!bpmDragging) {
+    document.getElementById('bpmSlider').value = s.songBpm;
   }
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
@@ -612,6 +622,20 @@ brightnessSlider.addEventListener('change', () => {
   brightnessDragging = false;
 });
 
+let bpmDragging = false;
+let bpmDebounce = null;
+const bpmSlider = document.getElementById('bpmSlider');
+bpmSlider.addEventListener('input', (e) => {
+  bpmDragging = true;
+  clearTimeout(bpmDebounce);
+  bpmDebounce = setTimeout(() => {
+    fetch('/applysong?bpm=' + e.target.value);
+  }, 150);
+});
+bpmSlider.addEventListener('change', () => {
+  bpmDragging = false;
+});
+
 buildGrid();
 loadStatus();
 setInterval(loadStatus, 2000);
@@ -640,6 +664,7 @@ void handleStatus() {
   doc["mic"] = micEnabled;
   doc["auto"] = autoCycle;
   doc["brightness"] = currentBrightness;
+  doc["songBpm"] = songBpm;
   doc["version"] = FIRMWARE_VERSION;
   doc["updateStatus"] = lastUpdateCheckResult;
   String out;
