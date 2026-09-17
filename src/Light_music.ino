@@ -67,6 +67,31 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+
+// ---------- Лог з дублюванням у пам'ять — видно віддалено на /log ----------
+// Оголошено тут, на самому початку, бо це глобальні змінні/макрос,
+// а не функції — .ino-конвертер PlatformIO не генерує для них прототипи,
+// тож фізичний порядок у файлі має значення.
+#define MAX_LOG_LINES 60
+String logBuffer[MAX_LOG_LINES];
+int logIndex = 0;
+int logCount = 0;
+
+void logLine(const String &s) {
+  Serial.println(s);
+  logBuffer[logIndex] = s;
+  logIndex = (logIndex + 1) % MAX_LOG_LINES;
+  if (logCount < MAX_LOG_LINES) logCount++;
+}
+
+void logLinef(const char* fmt, ...) {
+  char buf[220];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  logLine(String(buf));
+}
 #include <ArduinoJson.h>
 #include <driver/i2s_std.h>
 #include <ArduinoFFT.h>
@@ -505,7 +530,7 @@ void fxSquarePulse() {
   if (millis() - lastUpdate < 40) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
-    leds[i] = ((i + pos) % 6 < 3) ? CHSV(gHue, 255, 255) : CRGB::Black;
+    leds[i] = ((i + pos) % 6 < 3) ? CRGB(CHSV(gHue, 255, 255)) : CRGB::Black;
   }
   pos++;
   gHue++;
@@ -594,15 +619,14 @@ void fxRandomMarch() {
   lastUpdate = millis();
 
   for (int i = NUM_LEDS - 1; i > 0; i--) leds[i] = leds[i - 1];
-  leds[0] = (random8() < 60) ? CHSV(random8(), 255, 255) : CRGB::Black;
+  leds[0] = (random8() < 60) ? CRGB(CHSV(random8(), 255, 255)) : CRGB::Black;
 }
 
 // ---------- 32. Аврора (повільний шум у зелено-фіолетових тонах) ----------
 void fxAurora() {
   static uint16_t noiseZ = 0;
   CRGBPalette16 auroraPalette = CRGBPalette16(
-    CRGB::Black, CRGB::DarkGreen, CRGB::Green, CRGB::Teal,
-    CRGB::Purple, CRGB::DarkGreen, CRGB::Black, CRGB::Green
+    CRGB::Black, CRGB::DarkGreen, CRGB::Teal, CRGB::Purple
   );
   for (int i = 0; i < NUM_LEDS; i++) {
     uint8_t noiseVal = inoise8(i * 20, noiseZ);
@@ -673,7 +697,7 @@ void setupWiFi() {
 
     if (WiFi.status() == WL_CONNECTED) {
       Serial.print("[WiFi] Статичне підключення успішне, IP: ");
-      logLine(WiFi.localIP());
+      logLine(WiFi.localIP().toString());
       return;
     }
     logLine("[WiFi] Статичне підключення не вдалось, переходжу на WiFiManager...");
@@ -684,7 +708,7 @@ void setupWiFi() {
   bool connected = wm.autoConnect("LightMusic-Setup");
   if (connected) {
     Serial.print("WiFi підключено, IP: ");
-    logLine(WiFi.localIP());
+    logLine(WiFi.localIP().toString());
   } else {
     logLine("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
   }
@@ -1154,28 +1178,6 @@ void checkFirmwareUpdate() {
 //                          SETUP / LOOP
 // ================================================================
 
-// ---------- Лог з дублюванням у пам'ять — видно віддалено на /log ----------
-#define MAX_LOG_LINES 60
-String logBuffer[MAX_LOG_LINES];
-int logIndex = 0;
-int logCount = 0;
-
-void logLine(const String &s) {
-  Serial.println(s);
-  logBuffer[logIndex] = s;
-  logIndex = (logIndex + 1) % MAX_LOG_LINES;
-  if (logCount < MAX_LOG_LINES) logCount++;
-}
-
-void logLinef(const char* fmt, ...) {
-  char buf[220];
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, args);
-  va_end(args);
-  logLine(String(buf));
-}
-
 void setup() {
   Serial.begin(115200);
   logLinef("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
@@ -1229,7 +1231,7 @@ void loop() {
       // Щойно відновилось з'єднання (не просто перший запуск) — перезапускаємо
       // mDNS/OTA, бо вони інколи "не оживають" самі після реального обриву
       Serial.print("[WiFi] Підключення відновлено, IP: ");
-      logLine(WiFi.localIP());
+      logLine(WiFi.localIP().toString());
       setupMDNS();
       setupOTA();
       wasWifiConnected = true;
