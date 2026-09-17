@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.0.1"
+#define FIRMWARE_VERSION "2.0.2"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -100,7 +100,7 @@ void logLinef(const char* fmt, ...) {
 #define LED_PIN     4
 #define NUM_LEDS    18           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
 #define LED_TYPE    WS2812B
-#define COLOR_ORDER RGB
+#define COLOR_ORDER GBR
 
 uint8_t currentBrightness = 15; // 0-255, тепер керується з вебсторінки
 
