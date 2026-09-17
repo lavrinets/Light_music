@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.6.8"
+#define FIRMWARE_VERSION "1.6.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -117,6 +117,8 @@ ArduinoFFT<double> FFT(vReal, vImag, SAMPLES, SAMPLING_FREQ);
 float bandValues[NUM_BANDS];
 float bandPeaks[NUM_BANDS];
 uint8_t hueBaseMic = 0;
+float micSensitivity = 4000.0; // менше значення = чутливіше (реагує на тихіший звук)
+float songBpm = 62; // спільна змінна темпу — оновлюється і пошуком пісні, і детектором ритму з мікрофона
 
 i2s_chan_handle_t rxHandle;
 
@@ -175,7 +177,7 @@ void readAudioAndFFT() {
     float sum = 0; int count = 0;
     for (int i = bin0; i <= bin1; i++) { sum += vReal[i]; count++; }
     float avg = count > 0 ? sum / count : 0;
-    bandValues[b] = constrain(avg / 4000.0, 0.0, 1.0);
+    bandValues[b] = constrain(avg / micSensitivity, 0.0, 1.0);
   }
 }
 
@@ -200,6 +202,32 @@ void renderSpectrum() {
     }
   }
   hueBaseMic += 1;
+}
+
+// ---------- Автоматичне визначення BPM з баса (onset detection) ----------
+float bassAvgLevel = 0;
+unsigned long lastBeatTime = 0;
+float micDetectedBpm = 0;
+
+void detectBeatAndUpdateBpm() {
+  float bass = bandValues[0]; // найнижча частотна смуга — там сидить бас/бочка
+  bassAvgLevel = bassAvgLevel * 0.95 + bass * 0.05; // повільне "фонове" середнє
+
+  unsigned long now = millis();
+  float threshold = bassAvgLevel * 1.4; // поріг над фоном, щоб вважати це "ударом"
+
+  // мінімум 250мс між ударами (= максимум 240 BPM), щоб не ловити шум як подвійний удар
+  if (bass > threshold && bass > 0.12 && (now - lastBeatTime) > 250) {
+    if (lastBeatTime > 0) {
+      unsigned long interval = now - lastBeatTime;
+      float instantBpm = 60000.0 / interval;
+      if (instantBpm >= 60 && instantBpm <= 200) { // відкидаємо явно нереалістичні значення
+        micDetectedBpm = (micDetectedBpm == 0) ? instantBpm : (micDetectedBpm * 0.7 + instantBpm * 0.3);
+        songBpm = micDetectedBpm; // одразу підтягуємо в загальний BPM, якщо десь використовується fxBpm
+      }
+    }
+    lastBeatTime = now;
+  }
 }
 
 // ================================================================
@@ -228,8 +256,6 @@ void fxSinelon() {
   leds[pos] += CHSV(gHue, 255, 192);
   gHue++;
 }
-
-float songBpm = 62; // за замовчуванням; оновлюється пошуком пісні через Spotify
 
 void fxBpm() {
   CRGBPalette16 palette = PartyColors_p;
@@ -398,8 +424,8 @@ bool wasWifiConnected = false;
 // Якщо задано — плата спершу пробує підключитись сюди напряму (швидко, без порталу).
 // Якщо не вдасться за WIFI_STATIC_TIMEOUT_MS — впаде на WiFiManager (портал LightMusic-Setup).
 // Залиш порожніми ("") обидва рядки, якщо статичний WiFi не потрібен.
-const char* WIFI_STATIC_SSID = "";
-const char* WIFI_STATIC_PASSWORD = "";
+const char* WIFI_STATIC_SSID = "ТВОЯ_МЕРЕЖА";
+const char* WIFI_STATIC_PASSWORD = "ТВІЙ_ПАРОЛЬ";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
@@ -486,6 +512,14 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <div class="row">
   <label><input type="checkbox" id="micToggle"> Мікрофон (світломузика)</label>
 </div>
+<div class="row" id="micSensitivityRow" style="display:none;">
+  <span style="min-width:90px;">Чутливість мік.</span>
+  <span>🔈</span>
+  <input type="range" id="micSensSlider" min="500" max="10000" value="4000">
+  <span>🔊</span>
+  <span id="micSensPercent" style="min-width:40px;"></span>
+</div>
+<div id="micBpmInfo" style="display:none; font-size:13px; color:#999; margin-bottom:10px;"></div>
 <div class="row">
   <span style="min-width:90px;">Яскравість</span>
   <span>🔅</span>
@@ -518,6 +552,16 @@ const loadStatus = async () => {
     `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'} | v${s.version}`;
   document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
   document.getElementById('micToggle').checked = s.mic;
+  document.getElementById('micSensitivityRow').style.display = s.mic ? 'flex' : 'none';
+  document.getElementById('micBpmInfo').style.display = s.mic ? 'block' : 'none';
+  if (s.mic) {
+    document.getElementById('micBpmInfo').innerText =
+      s.micDetectedBpm > 0 ? `🥁 Визначений ритм: ${s.micDetectedBpm.toFixed(0)} BPM` : '🥁 Слухаю ритм...';
+  }
+  if (!micSensDragging) {
+    document.getElementById('micSensSlider').value = s.micSensitivity;
+    updateSliderPercent('micSensSlider', 'micSensPercent');
+  }
   if (!brightnessDragging) {
     document.getElementById('brightnessSlider').value = s.brightness;
     updateSliderPercent('brightnessSlider', 'brightnessPercent');
@@ -648,6 +692,21 @@ bpmSlider.addEventListener('change', () => {
   bpmDragging = false;
 });
 
+let micSensDragging = false;
+let micSensDebounce = null;
+const micSensSlider = document.getElementById('micSensSlider');
+micSensSlider.addEventListener('input', (e) => {
+  micSensDragging = true;
+  updateSliderPercent('micSensSlider', 'micSensPercent');
+  clearTimeout(micSensDebounce);
+  micSensDebounce = setTimeout(() => {
+    fetch('/micsensitivity?v=' + e.target.value);
+  }, 150);
+});
+micSensSlider.addEventListener('change', () => {
+  micSensDragging = false;
+});
+
 buildGrid();
 loadStatus();
 setInterval(loadStatus, 2000);
@@ -677,6 +736,8 @@ void handleStatus() {
   doc["auto"] = autoCycle;
   doc["brightness"] = currentBrightness;
   doc["songBpm"] = songBpm;
+  doc["micSensitivity"] = micSensitivity;
+  doc["micDetectedBpm"] = micDetectedBpm;
   doc["version"] = FIRMWARE_VERSION;
   doc["updateStatus"] = lastUpdateCheckResult;
   String out;
@@ -727,6 +788,17 @@ void handleResetWifi() {
   WiFiManager wm;
   wm.resetSettings();
   ESP.restart();
+}
+
+void handleMicSensitivity() {
+  if (server.hasArg("v")) {
+    float v = server.arg("v").toFloat();
+    if (v >= 500 && v <= 10000) {
+      micSensitivity = v;
+      Serial.printf("[web] Чутливість мікрофона: %.0f\n", micSensitivity);
+    }
+  }
+  server.send(200, "text/plain", "OK");
 }
 
 void handleBrightness() {
@@ -792,6 +864,7 @@ void setupWebServer() {
   server.on("/auto", handleSetAuto);
   server.on("/mic", handleMic);
   server.on("/brightness", handleBrightness);
+  server.on("/micsensitivity", handleMicSensitivity);
   server.on("/checkupdate", handleCheckUpdate);
   server.on("/search", handleSearchSong);
   server.on("/applysong", handleApplySong);
@@ -995,6 +1068,7 @@ void loop() {
   if (micEnabled) {
     readAudioAndFFT();
     renderSpectrum();
+    detectBeatAndUpdateBpm();
   } else {
     unsigned long now = millis();
     if (autoCycle && now - lastSwitch >= EFFECT_DURATION) {
