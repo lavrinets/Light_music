@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "1.7.1"
+#define FIRMWARE_VERSION "2.0.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -52,12 +52,10 @@ const char* OTA_HOSTNAME = "light-music";
 const char* FIRMWARE_UPDATE_URL = "https://mystation.pp.ua:85/Light_music/firmware/version.json";
 const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годину (мс)
 
-// ======================= GETSONGBPM.COM API =======================
-// getsongbpm.com/api -> реєстрація -> API-ключ (без OAuth, простий ключ)
-// Сам ключ лежить в getsongbpm_secret.h — НЕ комітиться в Git (див. .gitignore)
-#include "getsongbpm_secret.h"
-// =====================================================================
-// ===================================================================
+// ======================= ТЕМП ЕФЕКТІВ =======================
+// GetSongBPM видалено — незручний пошук, слабке покриття українських виконавців.
+// Темп тепер: або вручну повзунком "Ритм ефекту", або автоматично з мікрофона.
+// ===============================================================
 
 #include <FastLED.h>
 #include <WiFi.h>
@@ -79,7 +77,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
 
-uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 15; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
@@ -389,19 +387,249 @@ void fxRunningLights() {
   gHue++;
 }
 
+// ---------- 18. Фейерверк (ракети злітають і вибухають) ----------
+void fxFireworks() {
+  static unsigned long lastUpdate = 0;
+  static int rocketPos = -1;
+  static uint8_t rocketHue = 0;
+  static bool exploding = false;
+  static unsigned long explodeStart = 0;
+
+  if (millis() - lastUpdate < 20) return;
+  lastUpdate = millis();
+
+  fadeToBlackBy(leds, NUM_LEDS, 40);
+
+  if (!exploding) {
+    if (rocketPos < 0) { rocketPos = NUM_LEDS - 1; rocketHue = random8(); }
+    leds[rocketPos] = CHSV(rocketHue, 60, 255); // майже біла ракета, що летить вгору
+    rocketPos -= 2;
+    if (rocketPos <= NUM_LEDS / 3) { exploding = true; explodeStart = millis(); }
+  } else {
+    float t = (millis() - explodeStart) / 500.0;
+    if (t > 1.0) { exploding = false; rocketPos = -1; return; }
+    for (int i = 0; i < NUM_LEDS; i++) {
+      if (random8() < 60 * (1.0 - t)) leds[i] += CHSV(rocketHue, 255, 255 * (1.0 - t));
+    }
+  }
+}
+
+// ---------- 19. Стрибучі м'ячики (фізична симуляція падіння) ----------
+void fxBouncingBalls() {
+  const int numBalls = 3;
+  static float ballPos[numBalls];
+  static float ballVel[numBalls];
+  static bool initedBalls = false;
+  static unsigned long lastUpdate = 0;
+
+  if (!initedBalls) {
+    for (int i = 0; i < numBalls; i++) { ballPos[i] = 0; ballVel[i] = 3 + i * 1.5; }
+    initedBalls = true;
+  }
+  if (millis() - lastUpdate < 20) return;
+  lastUpdate = millis();
+
+  fadeToBlackBy(leds, NUM_LEDS, 100);
+  for (int i = 0; i < numBalls; i++) {
+    ballVel[i] -= 0.3; // "гравітація"
+    ballPos[i] += ballVel[i];
+    if (ballPos[i] < 0) { ballPos[i] = 0; ballVel[i] = -ballVel[i] * 0.85; } // відскок із втратою енергії
+    int idx = constrain((int)(ballPos[i] / 15.0 * NUM_LEDS), 0, NUM_LEDS - 1);
+    leds[idx] += CHSV(85 * i, 255, 255);
+  }
+}
+
+// ---------- 20. Шумова плазма (Перлін-шум замість sin/cos) ----------
+void fxNoisePlasma() {
+  static uint16_t noiseZ = 0;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    uint8_t noiseVal = inoise8(i * 30, noiseZ);
+    leds[i] = ColorFromPalette(RainbowColors_p, noiseVal);
+  }
+  noiseZ += 6;
+}
+
+// ---------- 21. Поліцейські вогні (червоно-сині половини) ----------
+void fxPoliceLights() {
+  static unsigned long lastUpdate = 0;
+  static bool on = false;
+  if (millis() - lastUpdate < 80) return;
+  lastUpdate = millis();
+  on = !on;
+  int half = NUM_LEDS / 2;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (i < half) leds[i] = on ? CRGB::Red : CRGB::Black;
+    else leds[i] = on ? CRGB::Black : CRGB::Blue;
+  }
+}
+
+// ---------- 22. Блок кольору, що біжить ----------
+void fxGradientChase() {
+  static unsigned long lastUpdate = 0;
+  static int pos = 0;
+  if (millis() - lastUpdate < 30) return;
+  lastUpdate = millis();
+  fadeToBlackBy(leds, NUM_LEDS, 255);
+  int blockSize = max(3, NUM_LEDS / 6);
+  for (int i = 0; i < blockSize; i++) {
+    int idx = (pos + i) % NUM_LEDS;
+    uint8_t val = map(i, 0, blockSize, 255, 60);
+    leds[idx] = CHSV(gHue, 255, val);
+  }
+  pos = (pos + 1) % NUM_LEDS;
+  gHue++;
+}
+
+// ---------- 23. Густе мерехтіння з повільним згасанням ----------
+void fxSparkleFade() {
+  fadeToBlackBy(leds, NUM_LEDS, 5); // повільніше згасання, ніж twinkleRandom
+  if (random8() < 150) leds[random16(NUM_LEDS)] = CHSV(random8(), 180, 255);
+}
+
+// ---------- 24. Райдужна крапка зі шлейфом ----------
+void fxRainbowChase() {
+  static unsigned long lastUpdate = 0;
+  static int pos = 0;
+  if (millis() - lastUpdate < 30) return;
+  lastUpdate = millis();
+  fadeToBlackBy(leds, NUM_LEDS, 60);
+  leds[pos] = CHSV(gHue, 255, 255);
+  pos = (pos + 1) % NUM_LEDS;
+  gHue += 4;
+}
+
+// ---------- 25. Квадратні імпульси, що біжать ----------
+void fxSquarePulse() {
+  static unsigned long lastUpdate = 0;
+  static int pos = 0;
+  if (millis() - lastUpdate < 40) return;
+  lastUpdate = millis();
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = ((i + pos) % 6 < 3) ? CHSV(gHue, 255, 255) : CRGB::Black;
+  }
+  pos++;
+  gHue++;
+}
+
+// ---------- 26. "Серцебиття" — подвійний пульс ----------
+void fxHeartbeat() {
+  static unsigned long phaseStart = 0;
+  unsigned long t = millis() - phaseStart;
+  const unsigned long cycle = 1000;
+  if (t > cycle) phaseStart = millis();
+
+  uint8_t bright;
+  if (t < 150) bright = map(t, 0, 150, 0, 255);
+  else if (t < 250) bright = map(t, 150, 250, 255, 60);
+  else if (t < 350) bright = map(t, 250, 350, 60, 200);
+  else if (t < 500) bright = map(t, 350, 500, 200, 0);
+  else bright = 0;
+
+  fill_solid(leds, NUM_LEDS, CHSV(0, 255, bright)); // червоний пульс
+}
+
+// ---------- 27. Хвиля-брижі з однієї точки ----------
+void fxRipple() {
+  static unsigned long lastUpdate = 0;
+  static int center = -1;
+  static float radius = 0;
+  if (millis() - lastUpdate < 20) return;
+  lastUpdate = millis();
+
+  if (center < 0) { center = random16(NUM_LEDS); radius = 0; }
+  fadeToBlackBy(leds, NUM_LEDS, 20);
+
+  int idx1 = center - (int)radius;
+  int idx2 = center + (int)radius;
+  if (idx1 >= 0 && idx1 < NUM_LEDS) leds[idx1] = CHSV(gHue, 255, 255);
+  if (idx2 >= 0 && idx2 < NUM_LEDS) leds[idx2] = CHSV(gHue, 255, 255);
+
+  radius += 0.5;
+  if (radius > NUM_LEDS) { center = -1; gHue += 30; }
+}
+
+// ---------- 28. Крижаний вогонь (Fire2012, синя палітра) ----------
+void fxIceFire() {
+  static byte heat[NUM_LEDS];
+  const byte cooling = 55, sparking = 120;
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2));
+  for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
+  if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
+  for (int j = 0; j < NUM_LEDS; j++) {
+    uint8_t colorIndex = scale8(heat[j], 240);
+    leds[j] = ColorFromPalette(CRGBPalette16(CRGB::Black, CRGB::Blue, CRGB::Aqua, CRGB::White), colorIndex);
+  }
+}
+
+// ---------- 29. "Матричний дощ" (падаючі краплі) ----------
+void fxMatrixRain() {
+  static unsigned long lastUpdate = 0;
+  static int drops[3] = {0, -8, -16};
+  if (millis() - lastUpdate < 40) return;
+  lastUpdate = millis();
+
+  fadeToBlackBy(leds, NUM_LEDS, 80);
+  for (int d = 0; d < 3; d++) {
+    if (drops[d] >= 0 && drops[d] < NUM_LEDS) leds[drops[d]] = CRGB::Green;
+    drops[d]++;
+    if (drops[d] > NUM_LEDS + 10) drops[d] = -random8(10);
+  }
+}
+
+// ---------- 30. Обертання суцільних кольорів ----------
+void fxColorWheelRotate() {
+  static unsigned long lastUpdate = 0;
+  static uint8_t hue = 0;
+  if (millis() - lastUpdate < 800) return; // тримає кожен колір довше, ніж просто перелив
+  lastUpdate = millis();
+  hue += 32; // дискретні кроки кольору, а не плавний перелив
+  fill_solid(leds, NUM_LEDS, CHSV(hue, 255, 220));
+}
+
+// ---------- 31. Марш кольорових блоків ----------
+void fxRandomMarch() {
+  static unsigned long lastUpdate = 0;
+  static uint8_t blockHue = 0;
+  if (millis() - lastUpdate < 150) return;
+  lastUpdate = millis();
+
+  for (int i = NUM_LEDS - 1; i > 0; i--) leds[i] = leds[i - 1];
+  leds[0] = (random8() < 60) ? CHSV(random8(), 255, 255) : CRGB::Black;
+}
+
+// ---------- 32. Аврора (повільний шум у зелено-фіолетових тонах) ----------
+void fxAurora() {
+  static uint16_t noiseZ = 0;
+  CRGBPalette16 auroraPalette = CRGBPalette16(
+    CRGB::Black, CRGB::DarkGreen, CRGB::Green, CRGB::Teal,
+    CRGB::Purple, CRGB::DarkGreen, CRGB::Black, CRGB::Green
+  );
+  for (int i = 0; i < NUM_LEDS; i++) {
+    uint8_t noiseVal = inoise8(i * 20, noiseZ);
+    leds[i] = ColorFromPalette(auroraPalette, noiseVal, 180);
+  }
+  noiseZ += 2; // повільніше за плазму — спокійний, "дихаючий" рух
+}
+
 typedef void (*EffectFunc)();
 EffectFunc effects[] = {
   fxRainbowCycle, fxRainbowGlitter, fxConfetti, fxSinelon, fxBpm,
   fxJuggle, fxTheaterChase, fxColorWipe, fxLarsonScanner, fxFire2012,
   fxMeteorRain, fxTwinkleRandom, fxBreathing, fxPlasma, fxComet,
-  fxStrobe, fxRunningLights
+  fxStrobe, fxRunningLights,
+  fxFireworks, fxBouncingBalls, fxNoisePlasma, fxPoliceLights, fxGradientChase,
+  fxSparkleFade, fxRainbowChase, fxSquarePulse, fxHeartbeat, fxRipple,
+  fxIceFire, fxMatrixRain, fxColorWheelRotate, fxRandomMarch, fxAurora
 };
 
 const char* effectNames[] = {
   "Райдужний перелив", "Райдуга з блискітками", "Конфеті", "Синелон", "Пульс (BPM)",
   "Жонглювання", "Театральна доріжка", "Color wipe", "Larson scanner", "Вогонь (Fire2012)",
   "Метеоритний дощ", "Мерехтіння зірок", "Дихання", "Плазма", "Комета",
-  "Стробоскоп", "Хвиля (running lights)"
+  "Стробоскоп", "Хвиля (running lights)",
+  "Фейерверк", "Стрибучі м'ячики", "Шумова плазма", "Поліцейські вогні", "Блок кольору",
+  "Густе мерехтіння", "Райдужна крапка", "Квадратні імпульси", "Серцебиття", "Брижі",
+  "Крижаний вогонь", "Матричний дощ", "Обертання кольорів", "Марш блоків", "Аврора"
 };
 
 const uint8_t NUM_EFFECTS = sizeof(effects) / sizeof(effects[0]);
@@ -435,7 +663,7 @@ void setupWiFi() {
 
   // Спершу пробуємо статичний WiFi, якщо він заданий (не порожній)
   if (strlen(WIFI_STATIC_SSID) > 0) {
-    Serial.printf("[WiFi] Пробую статичне підключення до \"%s\"...\n", WIFI_STATIC_SSID);
+    logLinef("[WiFi] Пробую статичне підключення до \"%s\"...\n", WIFI_STATIC_SSID);
     WiFi.begin(WIFI_STATIC_SSID, WIFI_STATIC_PASSWORD);
 
     unsigned long start = millis();
@@ -445,10 +673,10 @@ void setupWiFi() {
 
     if (WiFi.status() == WL_CONNECTED) {
       Serial.print("[WiFi] Статичне підключення успішне, IP: ");
-      Serial.println(WiFi.localIP());
+      logLine(WiFi.localIP());
       return;
     }
-    Serial.println("[WiFi] Статичне підключення не вдалось, переходжу на WiFiManager...");
+    logLine("[WiFi] Статичне підключення не вдалось, переходжу на WiFiManager...");
   }
 
   WiFiManager wm;
@@ -456,9 +684,9 @@ void setupWiFi() {
   bool connected = wm.autoConnect("LightMusic-Setup");
   if (connected) {
     Serial.print("WiFi підключено, IP: ");
-    Serial.println(WiFi.localIP());
+    logLine(WiFi.localIP());
   } else {
-    Serial.println("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
+    logLine("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
   }
 }
 
@@ -466,16 +694,16 @@ void setupOTA() {
   if (WiFi.status() != WL_CONNECTED) return;
   ArduinoOTA.setHostname(OTA_HOSTNAME);
   ArduinoOTA.begin();
-  Serial.println("ArduinoOTA готовий (заливка прошивки по WiFi з PlatformIO)");
+  logLine("ArduinoOTA готовий (заливка прошивки по WiFi з PlatformIO)");
 }
 
 void setupMDNS() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (MDNS.begin(OTA_HOSTNAME)) {
     MDNS.addService("http", "tcp", 80);
-    Serial.printf("mDNS готовий — відкривай http://%s.local\n", OTA_HOSTNAME);
+    logLinef("mDNS готовий — відкривай http://%s.local\n", OTA_HOSTNAME);
   } else {
-    Serial.println("Не вдалось запустити mDNS");
+    logLine("Не вдалось запустити mDNS");
   }
 }
 
@@ -499,15 +727,10 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 </head>
 <body>
 <h1>Light_music</h1>
+<p><a href="/log" style="color:#6cf; font-size:12px;">📜 Переглянути лог</a></p>
 <div id="status">Завантаження...</div>
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
-<div class="row">
-  <input type="text" id="songSearch" placeholder="Назва пісні або виконавця" style="flex:1; padding:8px; border-radius:6px; border:none; background:#222; color:#eee;">
-  <button onclick="searchSong()">🎵 Знайти пісню</button>
-</div>
-<div id="songResult" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
-<div style="font-size:11px; color:#555; margin-bottom:16px;">Темп пісень — <a href="https://getsongbpm.com" target="_blank" style="color:#666;">getsongbpm.com</a></div>
 
 <div class="row">
   <label><input type="checkbox" id="micToggle"> Мікрофон (світломузика)</label>
@@ -595,34 +818,6 @@ const reboot = () => {
     fetch('/reboot');
     document.getElementById('status').innerText = 'Перезавантажуюсь...';
   }
-};
-const searchSong = () => {
-  const q = document.getElementById('songSearch').value.trim();
-  if (!q) return;
-  document.getElementById('songResult').innerText = 'Шукаю...';
-  fetch('/search?q=' + encodeURIComponent(q))
-    .then(r => r.json())
-    .then(res => {
-      if (!res.ok) {
-        document.getElementById('songResult').innerText = 'Помилка: ' + res.error;
-        return;
-      }
-      const container = document.getElementById('songResult');
-      container.innerHTML = '';
-      res.results.forEach(item => {
-        const row = document.createElement('div');
-        row.style.cssText = 'padding:6px; cursor:pointer; border-bottom:1px solid #333;';
-        row.innerText = `🎵 ${item.artist} — ${item.title} (${item.bpm.toFixed(0)} BPM)`;
-        row.onclick = () => {
-          fetch('/applysong?bpm=' + item.bpm).then(loadStatus);
-          container.innerHTML = `Застосовано: ${item.artist} — ${item.title} (${item.bpm.toFixed(0)} BPM)`;
-        };
-        container.appendChild(row);
-      });
-    })
-    .catch(() => {
-      document.getElementById('songResult').innerText = 'Помилка з\'єднання';
-    });
 };
 
 const checkUpdate = () => {
@@ -753,7 +948,7 @@ void handleSetEffect() {
       autoCycle = false;
       micEnabled = false;
       FastLED.clear();
-      Serial.printf("[web] Обрано ефект вручну: %s\n", effectNames[i]);
+      logLinef("[web] Обрано ефект вручну: %s\n", effectNames[i]);
     }
   }
   server.send(200, "text/plain", "OK");
@@ -763,7 +958,7 @@ void handleSetAuto() {
   autoCycle = true;
   micEnabled = false;
   lastSwitch = millis();
-  Serial.println("[web] Увімкнено авто-перемикання ефектів");
+  logLine("[web] Увімкнено авто-перемикання ефектів");
   server.send(200, "text/plain", "OK");
 }
 
@@ -771,9 +966,54 @@ void handleMic() {
   if (server.hasArg("on")) {
     micEnabled = server.arg("on") == "1";
     if (micEnabled) autoCycle = false;
-    Serial.printf("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
+    logLinef("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
   }
   server.send(200, "text/plain", "OK");
+}
+
+void handleLogPage() {
+  String page = R"HTML(
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Light_music — лог</title>
+<style>
+  body { font-family: monospace; background:#111; color:#0f0; margin:0; padding:16px; font-size:13px; }
+  h1 { font-family: sans-serif; color:#eee; font-size:18px; }
+  #log { white-space: pre-wrap; word-break: break-all; }
+  a { color:#6cf; }
+</style>
+</head>
+<body>
+<h1>Light_music — Serial-лог (останні )HTML" + String(MAX_LOG_LINES) + R"HTML( рядків)</h1>
+<p><a href="/">← Назад на керування</a></p>
+<div id="log">Завантаження...</div>
+<script>
+const loadLog = () => {
+  fetch('/logdata').then(r => r.text()).then(t => {
+    document.getElementById('log').innerText = t;
+    window.scrollTo(0, document.body.scrollHeight);
+  });
+};
+loadLog();
+setInterval(loadLog, 2000);
+</script>
+</body>
+</html>
+)HTML";
+  server.send(200, "text/html", page);
+}
+
+void handleLogData() {
+  String out;
+  for (int i = 0; i < logCount; i++) {
+    int idx = (logIndex + i) % MAX_LOG_LINES; // від найстарішого до найновішого
+    if (logCount < MAX_LOG_LINES) idx = i; // поки буфер не заповнився — просто по порядку
+    out += logBuffer[idx] + "\n";
+  }
+  server.send(200, "text/plain", out);
 }
 
 void handleReboot() {
@@ -795,7 +1035,7 @@ void handleMicSensitivity() {
     float v = server.arg("v").toFloat();
     if (v >= 500 && v <= 10000) {
       micSensitivity = v;
-      Serial.printf("[web] Чутливість мікрофона: %.0f\n", micSensitivity);
+      logLinef("[web] Чутливість мікрофона: %.0f\n", micSensitivity);
     }
   }
   server.send(200, "text/plain", "OK");
@@ -807,34 +1047,10 @@ void handleBrightness() {
     if (v >= 0 && v <= 255) {
       currentBrightness = v;
       FastLED.setBrightness(currentBrightness);
-      Serial.printf("[web] Яскравість: %d\n", currentBrightness);
+      logLinef("[web] Яскравість: %d\n", currentBrightness);
     }
   }
   server.send(200, "text/plain", "OK");
-}
-
-void handleSearchSong() {
-  if (!server.hasArg("q")) {
-    server.send(400, "application/json", "{\"ok\":false,\"error\":\"немає запиту\"}");
-    return;
-  }
-  String query = server.arg("q");
-
-  String resultsJson, error;
-  bool ok = searchSongBpmCandidates(query, resultsJson, error);
-
-  if (ok) {
-    String out = "{\"ok\":true,\"results\":" + resultsJson + "}";
-    server.send(200, "application/json", out);
-  } else {
-    JsonDocument doc;
-    doc["ok"] = false;
-    doc["error"] = error;
-    Serial.println("[GetSongBPM] Помилка: " + error);
-    String out;
-    serializeJson(doc, out);
-    server.send(200, "application/json", out);
-  }
 }
 
 void handleApplySong() {
@@ -847,7 +1063,7 @@ void handleApplySong() {
   autoCycle = false;
   micEnabled = false;
   FastLED.clear();
-  Serial.printf("[GetSongBPM] Застосовано темп: %.1f BPM\n", songBpm);
+  logLinef("[web] Застосовано темп: %.1f BPM\n", songBpm);
   server.send(200, "text/plain", "OK");
 }
 
@@ -866,68 +1082,13 @@ void setupWebServer() {
   server.on("/brightness", handleBrightness);
   server.on("/micsensitivity", handleMicSensitivity);
   server.on("/checkupdate", handleCheckUpdate);
-  server.on("/search", handleSearchSong);
   server.on("/applysong", handleApplySong);
   server.on("/resetwifi", handleResetWifi);
   server.on("/reboot", handleReboot);
+  server.on("/log", handleLogPage);
+  server.on("/logdata", handleLogData);
   server.begin();
-  Serial.println("Веб-сервер запущений — відкрий IP плати в браузері");
-}
-
-// ---------- GETSONGBPM: пошук пісні і темп, одним запитом, без OAuth ----------
-String urlEncode(const String &str) {
-  String encoded = "";
-  char buf[4];
-  for (size_t i = 0; i < str.length(); i++) {
-    char c = str.charAt(i);
-    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-      encoded += c;
-    } else if (c == ' ') {
-      encoded += '+';
-    } else {
-      sprintf(buf, "%%%02X", (unsigned char)c);
-      encoded += buf;
-    }
-  }
-  return encoded;
-}
-
-bool searchSongBpmCandidates(const String &query, String &outJson, String &outError) {
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-
-  String url = "https://api.getsong.co/search/?type=song&lookup="
-                + urlEncode(query) + "&limit=8&api_key=" + String(GETSONGBPM_API_KEY);
-  http.begin(client, url);
-  int code = http.GET();
-  if (code != 200) {
-    outError = "помилка пошуку, код " + String(code);
-    http.end();
-    return false;
-  }
-
-  String payload = http.getString();
-  http.end();
-  Serial.println("[GetSongBPM] Відповідь: " + payload); // для налагодження точної структури JSON
-
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, payload);
-  if (err) { outError = "помилка розбору відповіді"; return false; }
-
-  JsonArray results = doc["search"].as<JsonArray>();
-  if (results.isNull() || results.size() == 0) { outError = "пісню не знайдено"; return false; }
-
-  JsonDocument outDoc;
-  JsonArray outArr = outDoc.to<JsonArray>();
-  for (JsonObject song : results) {
-    JsonObject item = outArr.add<JsonObject>();
-    item["title"] = song["title"].as<String>();
-    item["artist"] = song["artist"]["name"].as<String>();
-    item["bpm"] = song["tempo"].as<float>();
-  }
-  serializeJson(outDoc, outJson);
-  return true;
+  logLine("Веб-сервер запущений — відкрий IP плати в браузері");
 }
 
 // ---------- HTTP OTA: перевірка нової версії на Synology ----------
@@ -945,7 +1106,7 @@ void checkFirmwareUpdate() {
 
   HTTPClient http;
   if (!http.begin(client, FIRMWARE_UPDATE_URL)) {
-    Serial.println("[OTA] Не вдалось відкрити з'єднання для перевірки версії");
+    logLine("[OTA] Не вдалось відкрити з'єднання для перевірки версії");
     lastUpdateCheckResult = "помилка з'єднання";
     return;
   }
@@ -958,32 +1119,32 @@ void checkFirmwareUpdate() {
       String newVersion = doc["version"].as<String>();
       String binUrl = doc["url"].as<String>();
       if (newVersion.length() && newVersion != FIRMWARE_VERSION) {
-        Serial.printf("[OTA] Знайдено нову версію %s (поточна %s), оновлююсь...\n",
+        logLinef("[OTA] Знайдено нову версію %s (поточна %s), оновлююсь...\n",
                       newVersion.c_str(), FIRMWARE_VERSION);
         lastUpdateCheckResult = "знайдено v" + newVersion + ", оновлююсь...";
         httpUpdate.onProgress([](int cur, int total) {
           static int lastPercent = -1;
           int percent = total > 0 ? (cur * 100 / total) : 0;
           if (percent != lastPercent && percent % 10 == 0) {
-            Serial.printf("[OTA] Завантаження: %d%%\n", percent);
+            logLinef("[OTA] Завантаження: %d%%\n", percent);
             lastPercent = percent;
           }
         });
         t_httpUpdate_return ret = httpUpdate.update(client, binUrl);
         if (ret == HTTP_UPDATE_FAILED) {
-          Serial.printf("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
+          logLinef("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
           lastUpdateCheckResult = "помилка оновлення: " + String(httpUpdate.getLastErrorString().c_str());
         }
         // при успіху плата сама перезавантажиться
       } else {
-        Serial.println("[OTA] Версія актуальна");
+        logLine("[OTA] Версія актуальна");
         lastUpdateCheckResult = "версія актуальна (v" + String(FIRMWARE_VERSION) + ")";
       }
     } else {
       lastUpdateCheckResult = "помилка розбору version.json";
     }
   } else {
-    Serial.printf("[OTA] Не вдалось перевірити версію, код: %d\n", code);
+    logLinef("[OTA] Не вдалось перевірити версію, код: %d\n", code);
     lastUpdateCheckResult = "помилка перевірки, код " + String(code);
   }
   http.end();
@@ -993,15 +1154,37 @@ void checkFirmwareUpdate() {
 //                          SETUP / LOOP
 // ================================================================
 
+// ---------- Лог з дублюванням у пам'ять — видно віддалено на /log ----------
+#define MAX_LOG_LINES 60
+String logBuffer[MAX_LOG_LINES];
+int logIndex = 0;
+int logCount = 0;
+
+void logLine(const String &s) {
+  Serial.println(s);
+  logBuffer[logIndex] = s;
+  logIndex = (logIndex + 1) % MAX_LOG_LINES;
+  if (logCount < MAX_LOG_LINES) logCount++;
+}
+
+void logLinef(const char* fmt, ...) {
+  char buf[220];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  logLine(String(buf));
+}
+
 void setup() {
   Serial.begin(115200);
-  Serial.printf("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
+  logLinef("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
 
   prefs.begin("lightmusic", false);
   String lastVersion = prefs.getString("version", "");
   if (lastVersion.length() && lastVersion != FIRMWARE_VERSION) {
     lastUpdateCheckResult = "успішно оновлено з v" + lastVersion + " до v" + String(FIRMWARE_VERSION) + "!";
-    Serial.println("[OTA] " + lastUpdateCheckResult);
+    logLine("[OTA] " + lastUpdateCheckResult);
   }
   prefs.putString("version", FIRMWARE_VERSION);
 
@@ -1021,7 +1204,7 @@ void setup() {
   wasWifiConnected = (WiFi.status() == WL_CONNECTED);
 
   lastSwitch = millis();
-  Serial.printf("Демо-режим. Ефект 1/%d: %s\n", NUM_EFFECTS, effectNames[0]);
+  logLinef("Демо-режим. Ефект 1/%d: %s\n", NUM_EFFECTS, effectNames[0]);
 }
 
 void loop() {
@@ -1032,7 +1215,7 @@ void loop() {
   }
   if (buttonPressed && buttonWasPressed) {
     if (millis() - buttonPressStart >= WIFI_RESET_HOLD_MS) {
-      Serial.println("[кнопка] Утримання 5 сек — скидаю WiFi і перезавантажуюсь");
+      logLine("[кнопка] Утримання 5 сек — скидаю WiFi і перезавантажуюсь");
       WiFiManager wm;
       wm.resetSettings();
       delay(100);
@@ -1046,7 +1229,7 @@ void loop() {
       // Щойно відновилось з'єднання (не просто перший запуск) — перезапускаємо
       // mDNS/OTA, бо вони інколи "не оживають" самі після реального обриву
       Serial.print("[WiFi] Підключення відновлено, IP: ");
-      Serial.println(WiFi.localIP());
+      logLine(WiFi.localIP());
       setupMDNS();
       setupOTA();
       wasWifiConnected = true;
@@ -1060,7 +1243,7 @@ void loop() {
     // не блокуючи основний цикл (ефекти й далі йдуть, поки чекаємо мережу)
     if (millis() - lastWifiReconnectAttempt >= WIFI_RECONNECT_INTERVAL) {
       lastWifiReconnectAttempt = millis();
-      Serial.println("[WiFi] З'єднання втрачено, пробую перепідключитись...");
+      logLine("[WiFi] З'єднання втрачено, пробую перепідключитись...");
       WiFi.reconnect();
     }
   }
@@ -1075,13 +1258,13 @@ void loop() {
       lastSwitch = now;
       currentEffect = (currentEffect + 1) % NUM_EFFECTS;
       FastLED.clear();
-      Serial.printf("Перемикаю на ефект %d/%d: %s\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect]);
+      logLinef("Перемикаю на ефект %d/%d: %s\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect]);
     }
     EVERY_N_MILLISECONDS(5000) {
       if (autoCycle) {
         unsigned long elapsed = millis() - lastSwitch;
         unsigned long remainingSec = (EFFECT_DURATION > elapsed) ? (EFFECT_DURATION - elapsed) / 1000 : 0;
-        Serial.printf("До зміни ефекту (%s): %lu сек\n", effectNames[currentEffect], remainingSec);
+        logLinef("До зміни ефекту (%s): %lu сек\n", effectNames[currentEffect], remainingSec);
       }
     }
     effects[currentEffect]();
