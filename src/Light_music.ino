@@ -448,19 +448,42 @@ void fxBouncingBalls() {
   static unsigned long lastUpdate = 0;
 
   if (!initedBalls) {
-    for (int i = 0; i < numBalls; i++) { ballPos[i] = 0; ballVel[i] = 3 + i * 1.5; }
+    for (int i = 0; i < numBalls; i++) {
+      ballPos[i] = NUM_LEDS - 1;       // Починаємо з вершини стрічки
+      ballVel[i] = 0;                  // Просто відпускаємо падати
+    }
     initedBalls = true;
   }
+
   if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
 
   fadeToBlackBy(leds, NUM_LEDS, 100);
+
+  // Фізичні коефіцієнти (підібрані під розмір стрічки)
+  const float gravity = -0.1;          // М'яка гравітація
+  const float bounceImpact = -0.90;    // Пружність відскоку (повертає 90% енергії)
+
   for (int i = 0; i < numBalls; i++) {
-    ballVel[i] -= 0.3; // "гравітація"
-    ballPos[i] += ballVel[i];
-    if (ballPos[i] < 0) { ballPos[i] = 0; ballVel[i] = -ballVel[i] * 0.85; } // відскок із втратою енергії
-    int idx = constrain((int)(ballPos[i] / 15.0 * NUM_LEDS), 0, NUM_LEDS - 1);
-    leds[idx] += CHSV(85 * i, 255, 255);
+    ballVel[i] += gravity;             // Додаємо гравітацію до швидкості
+    ballPos[i] += ballVel[i];          // Змінюємо позицію
+
+    // Перевірка удару об землю
+    if (ballPos[i] <= 0) {
+      ballPos[i] = 0;                  // Залишаємо на землі
+      ballVel[i] = ballVel[i] * bounceImpact; // Відскок вгору
+      
+      // Анти-затухання: якщо енергії замало для підйому, штовхаємо надійно назад
+      if (ballVel[i] < 0.5) {
+        ballVel[i] = 2.0 + i * 0.5; 
+      }
+    }
+
+    // Переводимо позицію напряму в індекс світлодіода
+    int idx = constrain((int)ballPos[i], 0, NUM_LEDS - 1);
+    
+    // Малюємо м'ячик (замість += краще явне присвоєння кольору, щоб не змішувались у білий)
+    leds[idx] = CHSV(85 * i, 255, 255); 
   }
 }
 
