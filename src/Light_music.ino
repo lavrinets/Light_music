@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.1.0"
+#define FIRMWARE_VERSION "2.1.1"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -100,9 +100,9 @@ void logLinef(const char* fmt, ...) {
 #define LED_PIN     4
 #define NUM_LEDS    18           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
 #define LED_TYPE    WS2812B
-#define COLOR_ORDER RGB   // WS2811 12V-стрічки часто йдуть саме так, а не GRB як WS2812B
+#define COLOR_ORDER BRG   // WS2811 12V-стрічки часто йдуть саме так, а не GRB як WS2812B
 
-uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 15; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
@@ -678,8 +678,8 @@ bool wasWifiConnected = false;
 // Якщо задано — плата спершу пробує підключитись сюди напряму (швидко, без порталу).
 // Якщо не вдасться за WIFI_STATIC_TIMEOUT_MS — впаде на WiFiManager (портал LightMusic-Setup).
 // Залиш порожніми ("") обидва рядки, якщо статичний WiFi не потрібен.
-const char* WIFI_STATIC_SSID = "ТВОЯ_МЕРЕЖА";
-const char* WIFI_STATIC_PASSWORD = "ТВІЙ_ПАРОЛЬ";
+const char* WIFI_STATIC_SSID = "";
+const char* WIFI_STATIC_PASSWORD = "";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
