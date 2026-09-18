@@ -100,9 +100,9 @@ void logLinef(const char* fmt, ...) {
 #define LED_PIN     4
 #define NUM_LEDS    18           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
 #define LED_TYPE    WS2812B
-#define COLOR_ORDER BRG   // WS2811 12V-стрічки часто йдуть саме так, а не GRB як WS2812B
+#define COLOR_ORDER RGB   // WS2811 12V-стрічки часто йдуть саме так, а не GRB як WS2812B
 
-uint8_t currentBrightness = 15; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
@@ -663,6 +663,7 @@ uint8_t currentEffect = 0;
 unsigned long lastSwitch = 0;
 
 bool forceUpdateCheck = false;
+unsigned long bootTime = 0; // час старту — щоб відкласти першу перевірку оновлень
 String lastUpdateCheckResult = "ще не перевірялось";
 Preferences prefs;
 
@@ -678,8 +679,8 @@ bool wasWifiConnected = false;
 // Якщо задано — плата спершу пробує підключитись сюди напряму (швидко, без порталу).
 // Якщо не вдасться за WIFI_STATIC_TIMEOUT_MS — впаде на WiFiManager (портал LightMusic-Setup).
 // Залиш порожніми ("") обидва рядки, якщо статичний WiFi не потрібен.
-const char* WIFI_STATIC_SSID = "";
-const char* WIFI_STATIC_PASSWORD = "";
+const char* WIFI_STATIC_SSID = "ТВОЯ_МЕРЕЖА";
+const char* WIFI_STATIC_PASSWORD = "ТВІЙ_ПАРОЛЬ";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
@@ -698,8 +699,7 @@ void setupWiFi() {
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.print("[WiFi] Статичне підключення успішне, IP: ");
-      logLine(WiFi.localIP().toString());
+      logLinef("[WiFi] Статичне підключення успішне, IP: %s", WiFi.localIP().toString().c_str());
       return;
     }
     logLine("[WiFi] Статичне підключення не вдалось, переходжу на WiFiManager...");
@@ -709,8 +709,7 @@ void setupWiFi() {
   wm.setConfigPortalTimeout(180); // 3 хв на налаштування, потім працює далі офлайн демо-режимом
   bool connected = wm.autoConnect("LightMusic-Setup");
   if (connected) {
-    Serial.print("WiFi підключено, IP: ");
-    logLine(WiFi.localIP().toString());
+    logLinef("WiFi підключено, IP: %s", WiFi.localIP().toString().c_str());
   } else {
     logLine("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
   }
@@ -1174,6 +1173,8 @@ void checkFirmwareUpdate() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   bool forced = forceUpdateCheck;
+  const unsigned long STARTUP_DELAY = 300000UL; // 5 хв — не блокувати щойно піднятий вебсервер одразу після старту
+  if (!forced && millis() - bootTime < STARTUP_DELAY) return;
   if (!forced && lastCheck != 0 && millis() - lastCheck < UPDATE_CHECK_INTERVAL) return;
   lastCheck = millis();
   forceUpdateCheck = false;
@@ -1232,6 +1233,7 @@ void checkFirmwareUpdate() {
 // ================================================================
 
 void setup() {
+  bootTime = millis();
   Serial.begin(115200);
   logLinef("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
 
@@ -1283,8 +1285,7 @@ void loop() {
     if (!wasWifiConnected) {
       // Щойно відновилось з'єднання (не просто перший запуск) — перезапускаємо
       // mDNS/OTA, бо вони інколи "не оживають" самі після реального обриву
-      Serial.print("[WiFi] Підключення відновлено, IP: ");
-      logLine(WiFi.localIP().toString());
+      logLinef("[WiFi] Підключення відновлено, IP: %s", WiFi.localIP().toString().c_str());
       setupMDNS();
       setupOTA();
       wasWifiConnected = true;
