@@ -679,8 +679,8 @@ bool wasWifiConnected = false;
 // Якщо задано — плата спершу пробує підключитись сюди напряму (швидко, без порталу).
 // Якщо не вдасться за WIFI_STATIC_TIMEOUT_MS — впаде на WiFiManager (портал LightMusic-Setup).
 // Залиш порожніми ("") обидва рядки, якщо статичний WiFi не потрібен.
-const char* WIFI_STATIC_SSID = "ТВОЯ_МЕРЕЖА";
-const char* WIFI_STATIC_PASSWORD = "ТВІЙ_ПАРОЛЬ";
+const char* WIFI_STATIC_SSID = "";
+const char* WIFI_STATIC_PASSWORD = "";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
