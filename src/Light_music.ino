@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.0.5"
+#define FIRMWARE_VERSION "2.1.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -100,9 +100,9 @@ void logLinef(const char* fmt, ...) {
 #define LED_PIN     4
 #define NUM_LEDS    18           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
 #define LED_TYPE    WS2812B
-#define COLOR_ORDER BRG
+#define COLOR_ORDER RGB   // WS2811 12V-стрічки часто йдуть саме так, а не GRB як WS2812B
 
-uint8_t currentBrightness = 15; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
@@ -116,6 +116,8 @@ uint8_t gHue = 0;
 // ---------- РЕЖИМ РОБОТИ (керується з вебсторінки) ----------
 bool micEnabled = false;   // false = демо-ефекти, true = світломузика з мікрофона
 bool autoCycle  = true;    // false = ефект зафіксований вручну через вебсторінку
+bool staticLightEnabled = false; // окремий режим, найвищий пріоритет над ефектами й мікрофоном
+CRGB staticColor = CRGB::White;
 
 WebServer server(80);
 
@@ -448,42 +450,19 @@ void fxBouncingBalls() {
   static unsigned long lastUpdate = 0;
 
   if (!initedBalls) {
-    for (int i = 0; i < numBalls; i++) {
-      ballPos[i] = NUM_LEDS - 1;       // Починаємо з вершини стрічки
-      ballVel[i] = 0;                  // Просто відпускаємо падати
-    }
+    for (int i = 0; i < numBalls; i++) { ballPos[i] = 0; ballVel[i] = 3 + i * 1.5; }
     initedBalls = true;
   }
-
   if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
 
   fadeToBlackBy(leds, NUM_LEDS, 100);
-
-  // Фізичні коефіцієнти (підібрані під розмір стрічки)
-  const float gravity = -0.1;          // М'яка гравітація
-  const float bounceImpact = -0.90;    // Пружність відскоку (повертає 90% енергії)
-
   for (int i = 0; i < numBalls; i++) {
-    ballVel[i] += gravity;             // Додаємо гравітацію до швидкості
-    ballPos[i] += ballVel[i];          // Змінюємо позицію
-
-    // Перевірка удару об землю
-    if (ballPos[i] <= 0) {
-      ballPos[i] = 0;                  // Залишаємо на землі
-      ballVel[i] = ballVel[i] * bounceImpact; // Відскок вгору
-      
-      // Анти-затухання: якщо енергії замало для підйому, штовхаємо надійно назад
-      if (ballVel[i] < 0.5) {
-        ballVel[i] = 2.0 + i * 0.5; 
-      }
-    }
-
-    // Переводимо позицію напряму в індекс світлодіода
-    int idx = constrain((int)ballPos[i], 0, NUM_LEDS - 1);
-    
-    // Малюємо м'ячик (замість += краще явне присвоєння кольору, щоб не змішувались у білий)
-    leds[idx] = CHSV(85 * i, 255, 255); 
+    ballVel[i] -= 0.3; // "гравітація"
+    ballPos[i] += ballVel[i];
+    if (ballPos[i] < 0) { ballPos[i] = 0; ballVel[i] = -ballVel[i] * 0.85; } // відскок із втратою енергії
+    int idx = constrain((int)(ballPos[i] / 15.0 * NUM_LEDS), 0, NUM_LEDS - 1);
+    leds[idx] += CHSV(85 * i, 255, 255);
   }
 }
 
@@ -699,8 +678,8 @@ bool wasWifiConnected = false;
 // Якщо задано — плата спершу пробує підключитись сюди напряму (швидко, без порталу).
 // Якщо не вдасться за WIFI_STATIC_TIMEOUT_MS — впаде на WiFiManager (портал LightMusic-Setup).
 // Залиш порожніми ("") обидва рядки, якщо статичний WiFi не потрібен.
-const char* WIFI_STATIC_SSID = "";
-const char* WIFI_STATIC_PASSWORD = "";
+const char* WIFI_STATIC_SSID = "ТВОЯ_МЕРЕЖА";
+const char* WIFI_STATIC_PASSWORD = "ТВІЙ_ПАРОЛЬ";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
@@ -778,6 +757,10 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <div id="status">Завантаження...</div>
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
+<div class="row">
+  <button id="staticLightBtn" onclick="toggleStaticLight()">💡 Статичне світло</button>
+  <input type="color" id="staticColorPicker" value="#ffffff">
+</div>
 
 <div class="row">
   <label><input type="checkbox" id="micToggle"> Мікрофон (світломузика)</label>
@@ -822,6 +805,11 @@ const loadStatus = async () => {
     `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'} | v${s.version}`;
   document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
   document.getElementById('micToggle').checked = s.mic;
+  const staticBtn = document.getElementById('staticLightBtn');
+  staticBtn.classList.toggle('active', s.staticLight);
+  if (!staticColorDragging) {
+    document.getElementById('staticColorPicker').value = '#' + s.staticColor;
+  }
   document.getElementById('micSensitivityRow').style.display = s.mic ? 'flex' : 'none';
   document.getElementById('micBpmInfo').style.display = s.mic ? 'block' : 'none';
   if (s.mic) {
@@ -894,6 +882,21 @@ const checkUpdate = () => {
   };
   setTimeout(poll, 2000);
 };
+let staticColorDragging = false;
+const toggleStaticLight = () => {
+  const isOn = document.getElementById('staticLightBtn').classList.contains('active');
+  const color = document.getElementById('staticColorPicker').value.substring(1);
+  fetch('/staticlight?on=' + (isOn ? '0' : '1') + '&color=' + color).then(loadStatus);
+};
+document.getElementById('staticColorPicker').addEventListener('input', () => {
+  staticColorDragging = true;
+});
+document.getElementById('staticColorPicker').addEventListener('change', (e) => {
+  const color = e.target.value.substring(1);
+  fetch('/staticlight?on=1&color=' + color).then(loadStatus);
+  staticColorDragging = false;
+});
+
 document.getElementById('micToggle').addEventListener('change', (e) => {
   fetch('/mic?on=' + (e.target.checked ? '1' : '0')).then(loadStatus);
 });
@@ -975,6 +978,10 @@ void handleStatus() {
   doc["effect"] = micEnabled ? "Світломузика (мікрофон)" : effectNames[currentEffect];
   doc["index"] = currentEffect;
   doc["mic"] = micEnabled;
+  doc["staticLight"] = staticLightEnabled;
+  char colorHex[7];
+  sprintf(colorHex, "%02X%02X%02X", staticColor.r, staticColor.g, staticColor.b);
+  doc["staticColor"] = String(colorHex);
   doc["auto"] = autoCycle;
   doc["brightness"] = currentBrightness;
   doc["songBpm"] = songBpm;
@@ -1015,6 +1022,28 @@ void handleMic() {
     if (micEnabled) autoCycle = false;
     logLinef("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
   }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleStaticLight() {
+  if (server.hasArg("color")) {
+    String hex = server.arg("color");
+    if (hex.length() == 6) {
+      long rgb = strtol(hex.c_str(), NULL, 16);
+      staticColor = CRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+    }
+  }
+  if (server.hasArg("on")) {
+    staticLightEnabled = server.arg("on") == "1";
+    if (staticLightEnabled) {
+      micEnabled = false;
+      autoCycle = false;
+    } else {
+      autoCycle = true;
+      lastSwitch = millis();
+    }
+  }
+  logLinef("[web] Статичне світло: %s\n", staticLightEnabled ? "увімкнено" : "вимкнено");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1126,6 +1155,7 @@ void setupWebServer() {
   server.on("/effect", handleSetEffect);
   server.on("/auto", handleSetAuto);
   server.on("/mic", handleMic);
+  server.on("/staticlight", handleStaticLight);
   server.on("/brightness", handleBrightness);
   server.on("/micsensitivity", handleMicSensitivity);
   server.on("/checkupdate", handleCheckUpdate);
@@ -1273,7 +1303,9 @@ void loop() {
     }
   }
 
-  if (micEnabled) {
+  if (staticLightEnabled) {
+    fill_solid(leds, NUM_LEDS, staticColor);
+  } else if (micEnabled) {
     readAudioAndFFT();
     renderSpectrum();
     detectBeatAndUpdateBpm();
