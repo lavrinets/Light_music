@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.3.9"
+#define FIRMWARE_VERSION "2.4.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -102,7 +102,7 @@ void logLinef(const char* fmt, ...) {
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER BRG   // підібрано емпірично під конкретну стрічку — не міняти
 
-uint8_t currentBrightness = 5; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
@@ -1455,7 +1455,11 @@ void loop() {
     }
     server.handleClient();
     ArduinoOTA.handle();
-    checkFirmwareUpdate();
+    // Автоматична фонова перевірка ТИМЧАСОВО вимкнена — підозра, що саме OTA-процес
+    // пов'язаний з крашами heap corruption (маркер 0xbaad5678 у дампі стеку).
+    // Кнопка "Перевірити оновлення" на вебсторінці й далі працює (forceUpdateCheck),
+    // бо форсована перевірка минає цю перевірку нижче.
+    if (forceUpdateCheck) checkFirmwareUpdate();
   } else {
     wasWifiConnected = false;
     // WiFi відпав — пробуємо перепідключитись раз на WIFI_RECONNECT_INTERVAL,
