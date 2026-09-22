@@ -102,7 +102,7 @@ void logLinef(const char* fmt, ...) {
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER BRG   // підібрано емпірично під конкретну стрічку — не міняти
 
-uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 5; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
