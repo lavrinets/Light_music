@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.4.1"
+#define FIRMWARE_VERSION "2.6.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -67,31 +67,6 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
-
-// ---------- Лог з дублюванням у пам'ять — видно віддалено на /log ----------
-// Оголошено тут, на самому початку, бо це глобальні змінні/макрос,
-// а не функції — .ino-конвертер PlatformIO не генерує для них прототипи,
-// тож фізичний порядок у файлі має значення.
-#define MAX_LOG_LINES 60
-String logBuffer[MAX_LOG_LINES];
-int logIndex = 0;
-int logCount = 0;
-
-void logLine(const String &s) {
-  Serial.println(s);
-  logBuffer[logIndex] = s;
-  logIndex = (logIndex + 1) % MAX_LOG_LINES;
-  if (logCount < MAX_LOG_LINES) logCount++;
-}
-
-void logLinef(const char* fmt, ...) {
-  char buf[220];
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(buf, sizeof(buf), fmt, args);
-  va_end(args);
-  logLine(String(buf));
-}
 #include <ArduinoJson.h>
 #include <driver/i2s_std.h>
 #include <ArduinoFFT.h>
@@ -102,7 +77,7 @@ void logLinef(const char* fmt, ...) {
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER BRG   // підібрано емпірично під конкретну стрічку — не міняти
 
-uint8_t currentBrightness = 5; // 0-255, тепер керується з вебсторінки
+uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
 
 // ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
 #define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
@@ -259,7 +234,7 @@ void detectBeatAndUpdateBpm() {
 //                        17 ДЕМО-ЕФЕКТІВ
 // ================================================================
 
-const unsigned long EFFECT_DURATION = 30000; // 30 сек на ефект
+unsigned long effectDuration = 30000; // 30 сек на ефект за замовчуванням; тепер керується з вебу
 
 void addGlitter(fract8 chanceOfGlitter) {
   if (random8() < chanceOfGlitter) leds[random16(NUM_LEDS)] += CRGB::White;
@@ -820,7 +795,7 @@ void setupWiFi() {
 
   // Спершу пробуємо статичний WiFi, якщо він заданий (не порожній)
   if (strlen(WIFI_STATIC_SSID) > 0) {
-    logLinef("[WiFi] Пробую статичне підключення до \"%s\"...\n", WIFI_STATIC_SSID);
+    Serial.printf("[WiFi] Пробую статичне підключення до \"%s\"...\n", WIFI_STATIC_SSID);
     WiFi.begin(WIFI_STATIC_SSID, WIFI_STATIC_PASSWORD);
 
     unsigned long start = millis();
@@ -829,19 +804,26 @@ void setupWiFi() {
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-      logLinef("[WiFi] Статичне підключення успішне, IP: %s", WiFi.localIP().toString().c_str());
+      Serial.printf("[WiFi] Статичне підключення успішне, IP: %s", WiFi.localIP().toString().c_str());
       return;
     }
-    logLine("[WiFi] Статичне підключення не вдалось, переходжу на WiFiManager...");
+    Serial.println("[WiFi] Статичне підключення не вдалось, переходжу на WiFiManager...");
   }
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(180); // 3 хв на налаштування, потім працює далі офлайн демо-режимом
+  wm.setCustomHeadElement(
+    "<p style='background:#2a2;color:#fff;padding:10px;border-radius:6px;text-align:center;'>"
+    "Після підключення до WiFi відкрий <b>http://light-music.local</b> у браузері "
+    "(телефон/комп'ютер мають бути в тій самій мережі). "
+    "Якщо адреса не відкриється — подивись IP плати в налаштуваннях роутера."
+    "</p>"
+  );
   bool connected = wm.autoConnect("LightMusic-Setup");
   if (connected) {
-    logLinef("WiFi підключено, IP: %s", WiFi.localIP().toString().c_str());
+    Serial.printf("WiFi підключено, IP: %s", WiFi.localIP().toString().c_str());
   } else {
-    logLine("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
+    Serial.println("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
   }
 }
 
@@ -849,16 +831,16 @@ void setupOTA() {
   if (WiFi.status() != WL_CONNECTED) return;
   ArduinoOTA.setHostname(OTA_HOSTNAME);
   ArduinoOTA.begin();
-  logLine("ArduinoOTA готовий (заливка прошивки по WiFi з PlatformIO)");
+  Serial.println("ArduinoOTA готовий (заливка прошивки по WiFi з PlatformIO)");
 }
 
 void setupMDNS() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (MDNS.begin(OTA_HOSTNAME)) {
     MDNS.addService("http", "tcp", 80);
-    logLinef("mDNS готовий — відкривай http://%s.local\n", OTA_HOSTNAME);
+    Serial.printf("mDNS готовий — відкривай http://%s.local\n", OTA_HOSTNAME);
   } else {
-    logLine("Не вдалось запустити mDNS");
+    Serial.println("Не вдалось запустити mDNS");
   }
 }
 
@@ -882,7 +864,6 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 </head>
 <body>
 <h1>Light_music</h1>
-<p><a href="/log" style="color:#6cf; font-size:12px;">📜 Переглянути лог</a></p>
 <div id="status">Завантаження...</div>
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
@@ -917,6 +898,12 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
   <span id="bpmPercent" style="min-width:40px;">44%</span>
 </div>
 <div class="row">
+  <span style="min-width:90px;">Тривалість</span>
+  <span>⏱️</span>
+  <input type="range" id="durationSlider" min="5" max="120" value="30">
+  <span id="durationValue" style="min-width:60px;">30 сек</span>
+</div>
+<div class="row">
   <button onclick="setAuto()">Авто-перемикання ефектів</button>
   <button onclick="resetWifi()" style="background:#733;">Змінити WiFi</button>
   <button onclick="reboot()" style="background:#753;">Перезавантажити плату</button>
@@ -932,7 +919,9 @@ const loadStatus = async () => {
     const r = await fetch('/status');
     const s = await r.json();
     document.getElementById('status').innerText =
-      `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'} | v${s.version}`;
+      `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'}` +
+      (s.auto && !s.mic ? ` | наступний через ${s.effectRemainingSec}с` : '') +
+      ` | v${s.version}`;
     document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
     document.getElementById('micToggle').checked = s.mic;
     const staticBtn = document.getElementById('staticLightBtn');
@@ -957,6 +946,10 @@ const loadStatus = async () => {
   if (!bpmDragging) {
     document.getElementById('bpmSlider').value = s.songBpm;
     updateSliderPercent('bpmSlider', 'bpmPercent');
+  }
+  if (!durationDragging) {
+    document.getElementById('durationSlider').value = s.effectDuration;
+    document.getElementById('durationValue').innerText = s.effectDuration + ' сек';
   }
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
@@ -1070,6 +1063,21 @@ bpmSlider.addEventListener('change', () => {
   bpmDragging = false;
 });
 
+let durationDragging = false;
+let durationDebounce = null;
+const durationSlider = document.getElementById('durationSlider');
+durationSlider.addEventListener('input', (e) => {
+  durationDragging = true;
+  document.getElementById('durationValue').innerText = e.target.value + ' сек';
+  clearTimeout(durationDebounce);
+  durationDebounce = setTimeout(() => {
+    fetch('/effectduration?sec=' + e.target.value);
+  }, 150);
+});
+durationSlider.addEventListener('change', () => {
+  durationDragging = false;
+});
+
 let micSensDragging = false;
 let micSensDebounce = null;
 const micSensSlider = document.getElementById('micSensSlider');
@@ -1126,6 +1134,9 @@ void handleStatus() {
   doc["auto"] = autoCycle;
   doc["brightness"] = currentBrightness;
   doc["songBpm"] = songBpm;
+  doc["effectDuration"] = effectDuration / 1000; // в секундах для вебу
+  unsigned long elapsed = millis() - lastSwitch;
+  doc["effectRemainingSec"] = (effectDuration > elapsed) ? (effectDuration - elapsed) / 1000 : 0;
   doc["micSensitivity"] = micSensitivity;
   doc["micDetectedBpm"] = micDetectedBpm;
   doc["version"] = FIRMWARE_VERSION;
@@ -1143,7 +1154,7 @@ void handleSetEffect() {
       autoCycle = false;
       micEnabled = false;
       FastLED.clear();
-      logLinef("[web] Обрано ефект вручну: %s\n", effectNames[i]);
+      Serial.printf("[web] Обрано ефект вручну: %s\n", effectNames[i]);
     }
   }
   server.send(200, "text/plain", "OK");
@@ -1153,7 +1164,7 @@ void handleSetAuto() {
   autoCycle = true;
   micEnabled = false;
   lastSwitch = millis();
-  logLine("[web] Увімкнено авто-перемикання ефектів");
+  Serial.println("[web] Увімкнено авто-перемикання ефектів");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1161,7 +1172,7 @@ void handleMic() {
   if (server.hasArg("on")) {
     micEnabled = server.arg("on") == "1";
     if (micEnabled) autoCycle = false;
-    logLinef("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
+    Serial.printf("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
   }
   server.send(200, "text/plain", "OK");
 }
@@ -1184,55 +1195,8 @@ void handleStaticLight() {
       lastSwitch = millis();
     }
   }
-  logLinef("[web] Статичне світло: %s\n", staticLightEnabled ? "увімкнено" : "вимкнено");
+  Serial.printf("[web] Статичне світло: %s\n", staticLightEnabled ? "увімкнено" : "вимкнено");
   server.send(200, "text/plain", "OK");
-}
-
-void handleLogPage() {
-  String page = R"HTML(
-<!DOCTYPE html>
-<html lang="uk">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Light_music — лог</title>
-<style>
-  body { font-family: monospace; background:#111; color:#0f0; margin:0; padding:16px; font-size:13px; }
-  h1 { font-family: sans-serif; color:#eee; font-size:18px; }
-  #log { white-space: pre-wrap; word-break: break-all; }
-  a { color:#6cf; }
-</style>
-</head>
-<body>
-<h1>Light_music — Serial-лог (останні )HTML" + String(MAX_LOG_LINES) + R"HTML( рядків)</h1>
-<p><a href="/">← Назад на керування</a></p>
-<div id="log">Завантаження...</div>
-<script>
-const loadLog = () => {
-  fetch('/logdata').then(r => r.text()).then(t => {
-    document.getElementById('log').innerText = t;
-    window.scrollTo(0, document.body.scrollHeight);
-  }).catch(() => {
-    document.getElementById('log').innerText = '⚠️ Плата не відповідає, пробую ще...';
-  });
-};
-loadLog();
-setInterval(loadLog, 5000); // те саме — менше навантаження на TCP-стек
-</script>
-</body>
-</html>
-)HTML";
-  server.send(200, "text/html", page);
-}
-
-void handleLogData() {
-  String out;
-  for (int i = 0; i < logCount; i++) {
-    int idx = (logIndex + i) % MAX_LOG_LINES; // від найстарішого до найновішого
-    if (logCount < MAX_LOG_LINES) idx = i; // поки буфер не заповнився — просто по порядку
-    out += logBuffer[idx] + "\n";
-  }
-  server.send(200, "text/plain", out);
 }
 
 void handleReboot() {
@@ -1254,7 +1218,18 @@ void handleMicSensitivity() {
     float v = server.arg("v").toFloat();
     if (v >= 500 && v <= 10000) {
       micSensitivity = v;
-      logLinef("[web] Чутливість мікрофона: %.0f\n", micSensitivity);
+      Serial.printf("[web] Чутливість мікрофона: %.0f\n", micSensitivity);
+    }
+  }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleEffectDuration() {
+  if (server.hasArg("sec")) {
+    int sec = server.arg("sec").toInt();
+    if (sec >= 5 && sec <= 300) {
+      effectDuration = (unsigned long)sec * 1000UL;
+      Serial.printf("[web] Тривалість ефекту: %d сек\n", sec);
     }
   }
   server.send(200, "text/plain", "OK");
@@ -1266,7 +1241,7 @@ void handleBrightness() {
     if (v >= 0 && v <= 255) {
       currentBrightness = v;
       FastLED.setBrightness(currentBrightness);
-      logLinef("[web] Яскравість: %d\n", currentBrightness);
+      Serial.printf("[web] Яскравість: %d\n", currentBrightness);
     }
   }
   server.send(200, "text/plain", "OK");
@@ -1282,7 +1257,7 @@ void handleApplySong() {
   autoCycle = false;
   micEnabled = false;
   FastLED.clear();
-  logLinef("[web] Застосовано темп: %.1f BPM\n", songBpm);
+  Serial.printf("[web] Застосовано темп: %.1f BPM\n", songBpm);
   server.send(200, "text/plain", "OK");
 }
 
@@ -1301,15 +1276,14 @@ void setupWebServer() {
   server.on("/mic", handleMic);
   server.on("/staticlight", handleStaticLight);
   server.on("/brightness", handleBrightness);
+  server.on("/effectduration", handleEffectDuration);
   server.on("/micsensitivity", handleMicSensitivity);
   server.on("/checkupdate", handleCheckUpdate);
   server.on("/applysong", handleApplySong);
   server.on("/resetwifi", handleResetWifi);
   server.on("/reboot", handleReboot);
-  server.on("/log", handleLogPage);
-  server.on("/logdata", handleLogData);
   server.begin();
-  logLine("Веб-сервер запущений — відкрий IP плати в браузері");
+  Serial.println("Веб-сервер запущений — відкрий IP плати в браузері");
 }
 
 // ---------- HTTP OTA: перевірка нової версії на Synology ----------
@@ -1339,7 +1313,7 @@ void checkFirmwareUpdate() {
 
   HTTPClient http;
   if (!http.begin(client, FIRMWARE_UPDATE_URL)) {
-    logLine("[OTA] Не вдалось відкрити з'єднання для перевірки версії");
+    Serial.println("[OTA] Не вдалось відкрити з'єднання для перевірки версії");
     lastUpdateCheckResult = "помилка з'єднання";
     lastFailedAttempt = millis();
     client.stop();
@@ -1354,33 +1328,33 @@ void checkFirmwareUpdate() {
       String newVersion = doc["version"].as<String>();
       String binUrl = doc["url"].as<String>();
       if (newVersion.length() && newVersion != FIRMWARE_VERSION) {
-        logLinef("[OTA] Знайдено нову версію %s (поточна %s), оновлююсь...\n",
+        Serial.printf("[OTA] Знайдено нову версію %s (поточна %s), оновлююсь...\n",
                       newVersion.c_str(), FIRMWARE_VERSION);
         lastUpdateCheckResult = "знайдено v" + newVersion + ", оновлююсь...";
         httpUpdate.onProgress([](int cur, int total) {
           static int lastPercent = -1;
           int percent = total > 0 ? (cur * 100 / total) : 0;
           if (percent != lastPercent && percent % 10 == 0) {
-            logLinef("[OTA] Завантаження: %d%%\n", percent);
+            Serial.printf("[OTA] Завантаження: %d%%\n", percent);
             lastPercent = percent;
           }
         });
         t_httpUpdate_return ret = httpUpdate.update(client, binUrl);
         if (ret == HTTP_UPDATE_FAILED) {
-          logLinef("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
+          Serial.printf("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
           lastUpdateCheckResult = "помилка оновлення: " + String(httpUpdate.getLastErrorString().c_str());
           lastFailedAttempt = millis();
         }
         // при успіху плата сама перезавантажиться
       } else {
-        logLine("[OTA] Версія актуальна");
+        Serial.println("[OTA] Версія актуальна");
         lastUpdateCheckResult = "версія актуальна (v" + String(FIRMWARE_VERSION) + ")";
       }
     } else {
       lastUpdateCheckResult = "помилка розбору version.json";
     }
   } else {
-    logLinef("[OTA] Не вдалось перевірити версію, код: %d\n", code);
+    Serial.printf("[OTA] Не вдалось перевірити версію, код: %d\n", code);
     lastUpdateCheckResult = "помилка перевірки, код " + String(code);
     lastFailedAttempt = millis();
   }
@@ -1400,13 +1374,13 @@ SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 void setup() {
   bootTime = millis();
   Serial.begin(115200);
-  logLinef("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
+  Serial.printf("=== Light_music firmware v%s ===\n", FIRMWARE_VERSION);
 
   prefs.begin("lightmusic", false);
   String lastVersion = prefs.getString("version", "");
   if (lastVersion.length() && lastVersion != FIRMWARE_VERSION) {
     lastUpdateCheckResult = "успішно оновлено з v" + lastVersion + " до v" + String(FIRMWARE_VERSION) + "!";
-    logLine("[OTA] " + lastUpdateCheckResult);
+    Serial.println("[OTA] " + lastUpdateCheckResult);
   }
   prefs.putString("version", FIRMWARE_VERSION);
 
@@ -1426,7 +1400,7 @@ void setup() {
   wasWifiConnected = (WiFi.status() == WL_CONNECTED);
 
   lastSwitch = millis();
-  logLinef("Демо-режим. Ефект 1/%d: %s\n", NUM_EFFECTS, effectNames[0]);
+  Serial.printf("Демо-режим. Ефект 1/%d: %s\n", NUM_EFFECTS, effectNames[0]);
 }
 
 void loop() {
@@ -1437,7 +1411,7 @@ void loop() {
   }
   if (buttonPressed && buttonWasPressed) {
     if (millis() - buttonPressStart >= WIFI_RESET_HOLD_MS) {
-      logLine("[кнопка] Утримання 5 сек — скидаю WiFi і перезавантажуюсь");
+      Serial.println("[кнопка] Утримання 5 сек — скидаю WiFi і перезавантажуюсь");
       WiFiManager wm;
       wm.resetSettings();
       delay(100);
@@ -1449,7 +1423,7 @@ void loop() {
   EVERY_N_SECONDS(60) {
     UBaseType_t freeStack = uxTaskGetStackHighWaterMark(NULL);
     if (freeStack < 1024) {
-      logLinef("[УВАГА] Мало вільного стеку: %u байт лишилось!", (unsigned)freeStack);
+      Serial.printf("[УВАГА] Мало вільного стеку: %u байт лишилось!", (unsigned)freeStack);
     }
   }
 
@@ -1457,7 +1431,7 @@ void loop() {
     if (!wasWifiConnected) {
       // Щойно відновилось з'єднання (не просто перший запуск) — перезапускаємо
       // mDNS/OTA, бо вони інколи "не оживають" самі після реального обриву
-      logLinef("[WiFi] Підключення відновлено, IP: %s", WiFi.localIP().toString().c_str());
+      Serial.printf("[WiFi] Підключення відновлено, IP: %s", WiFi.localIP().toString().c_str());
       setupMDNS();
       setupOTA();
       wasWifiConnected = true;
@@ -1475,7 +1449,7 @@ void loop() {
     // не блокуючи основний цикл (ефекти й далі йдуть, поки чекаємо мережу)
     if (millis() - lastWifiReconnectAttempt >= WIFI_RECONNECT_INTERVAL) {
       lastWifiReconnectAttempt = millis();
-      logLine("[WiFi] З'єднання втрачено, пробую перепідключитись...");
+      Serial.println("[WiFi] З'єднання втрачено, пробую перепідключитись...");
       WiFi.reconnect();
     }
   }
@@ -1492,18 +1466,11 @@ void loop() {
     FastLED.show();
   } else {
     unsigned long now = millis();
-    if (autoCycle && now - lastSwitch >= EFFECT_DURATION) {
+    if (autoCycle && now - lastSwitch >= effectDuration) {
       lastSwitch = now;
       currentEffect = (currentEffect + 1) % NUM_EFFECTS;
       FastLED.clear();
-      logLinef("Перемикаю на ефект %d/%d: %s\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect]);
-    }
-    EVERY_N_MILLISECONDS(5000) {
-      if (autoCycle) {
-        unsigned long elapsed = millis() - lastSwitch;
-        unsigned long remainingSec = (EFFECT_DURATION > elapsed) ? (EFFECT_DURATION - elapsed) / 1000 : 0;
-        logLinef("До зміни ефекту (%s): %lu сек\n", effectNames[currentEffect], remainingSec);
-      }
+      Serial.printf("Перемикаю на ефект %d/%d: %s\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect]);
     }
     // Фіксований кадр ~60 FPS замість delay(10) — сталіша частота кадрів,
     // і loop() крутиться швидше між кадрами, встигаючи частіше обслуговувати
