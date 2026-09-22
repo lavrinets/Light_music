@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.3.0"
+#define FIRMWARE_VERSION "2.3.1"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -319,7 +319,7 @@ void fxColorWipe() {
   static int pos = 0;
   static uint8_t colorIndex = 0;
   static const CRGB colors[] = {CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::Yellow, CRGB::Cyan, CRGB::Magenta};
-  if (millis() - lastUpdate < 30) return;
+  if (millis() - lastUpdate < 50) return;
   lastUpdate = millis();
   leds[pos] = colors[colorIndex % 6];
   pos++;
@@ -330,7 +330,7 @@ void fxLarsonScanner() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
   static int dir = 1;
-  if (millis() - lastUpdate < 20) return;
+  if (millis() - lastUpdate < 45) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 60);
   leds[pos] = CRGB::Red;
@@ -351,7 +351,7 @@ void fxMeteorRain() {
   static unsigned long lastUpdate = 0;
   static int meteorPos = 0;
   const byte meteorSize = 3, meteorTrailDecay = 96; // менший метеор і швидший шлейф — для 18-пиксельної стрічки
-  if (millis() - lastUpdate < 20) return;
+  if (millis() - lastUpdate < 40) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     if (random8(10) > 5) leds[i].fadeToBlackBy(meteorTrailDecay);
@@ -386,7 +386,7 @@ void fxPlasma() {
 void fxComet() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 25) return;
+  if (millis() - lastUpdate < 55) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 90);
   leds[pos] = CHSV(gHue, 255, 255);
@@ -517,7 +517,7 @@ void fxPoliceLights() {
 void fxGradientChase() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 30) return;
+  if (millis() - lastUpdate < 55) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 255);
   int blockSize = max(3, NUM_LEDS / 6);
@@ -540,7 +540,7 @@ void fxSparkleFade() {
 void fxRainbowChase() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 30) return;
+  if (millis() - lastUpdate < 55) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 60);
   leds[pos] = CHSV(gHue, 255, 255);
@@ -552,7 +552,7 @@ void fxRainbowChase() {
 void fxSquarePulse() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 40) return;
+  if (millis() - lastUpdate < 60) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ((i + pos) % 6 < 3) ? CRGB(CHSV(gHue, 255, 255)) : CRGB::Black;
@@ -583,7 +583,7 @@ void fxRipple() {
   static unsigned long lastUpdate = 0;
   static int center = -1;
   static float radius = 0;
-  if (millis() - lastUpdate < 20) return;
+  if (millis() - lastUpdate < 45) return;
   lastUpdate = millis();
 
   if (center < 0) { center = random16(NUM_LEDS); radius = 0; }
@@ -665,7 +665,7 @@ void fxDualScan() {
   static unsigned long lastUpdate = 0;
   static int pos1 = 0, pos2 = 0;
   static int dir1 = 1, dir2 = -1;
-  if (millis() - lastUpdate < 20) return;
+  if (millis() - lastUpdate < 45) return;
   lastUpdate = millis();
   if (pos2 == 0) pos2 = NUM_LEDS - 1; // ініціалізація стартової позиції другої крапки
 
@@ -700,7 +700,7 @@ void fxHalloweenChase() {
 void fxColorSweep() {
   static unsigned long lastUpdate = 0;
   static int step = 0;
-  if (millis() - lastUpdate < 40) return;
+  if (millis() - lastUpdate < 60) return;
   lastUpdate = millis();
   int half = NUM_LEDS / 2;
   if (step > half) { step = 0; FastLED.clear(); gHue += 40; }
