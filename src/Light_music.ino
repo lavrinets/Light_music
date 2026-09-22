@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.3.5"
+#define FIRMWARE_VERSION "2.3.6"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -928,26 +928,27 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <script>
 const EFFECT_NAMES = REPLACE_NAMES;
 const loadStatus = async () => {
-  const r = await fetch('/status');
-  const s = await r.json();
-  document.getElementById('status').innerText =
-    `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'} | v${s.version}`;
-  document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
-  document.getElementById('micToggle').checked = s.mic;
-  const staticBtn = document.getElementById('staticLightBtn');
-  staticBtn.classList.toggle('active', s.staticLight);
-  if (!staticColorDragging) {
-    document.getElementById('staticColorPicker').value = '#' + s.staticColor;
-  }
-  document.getElementById('micSensitivityRow').style.display = s.mic ? 'flex' : 'none';
-  document.getElementById('micBpmInfo').style.display = s.mic ? 'block' : 'none';
-  if (s.mic) {
-    document.getElementById('micBpmInfo').innerText =
-      s.micDetectedBpm > 0 ? `🥁 Визначений ритм: ${s.micDetectedBpm.toFixed(0)} BPM` : '🥁 Слухаю ритм...';
-  }
-  if (!micSensDragging) {
-    document.getElementById('micSensSlider').value = s.micSensitivity;
-    updateSliderPercent('micSensSlider', 'micSensPercent');
+  try {
+    const r = await fetch('/status');
+    const s = await r.json();
+    document.getElementById('status').innerText =
+      `Ефект: ${s.effect} | Мікрофон: ${s.mic ? 'увімкнено' : 'вимкнено'} | Авто: ${s.auto ? 'так' : 'ні'} | v${s.version}`;
+    document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
+    document.getElementById('micToggle').checked = s.mic;
+    const staticBtn = document.getElementById('staticLightBtn');
+    staticBtn.classList.toggle('active', s.staticLight);
+    if (!staticColorDragging) {
+      document.getElementById('staticColorPicker').value = '#' + s.staticColor;
+    }
+    document.getElementById('micSensitivityRow').style.display = s.mic ? 'flex' : 'none';
+    document.getElementById('micBpmInfo').style.display = s.mic ? 'block' : 'none';
+    if (s.mic) {
+      document.getElementById('micBpmInfo').innerText =
+        s.micDetectedBpm > 0 ? `🥁 Визначений ритм: ${s.micDetectedBpm.toFixed(0)} BPM` : '🥁 Слухаю ритм...';
+    }
+    if (!micSensDragging) {
+      document.getElementById('micSensSlider').value = s.micSensitivity;
+      updateSliderPercent('micSensSlider', 'micSensPercent');
   }
   if (!brightnessDragging) {
     document.getElementById('brightnessSlider').value = s.brightness;
@@ -960,6 +961,9 @@ const loadStatus = async () => {
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
   });
+  } catch (err) {
+    document.getElementById('status').innerText = '⚠️ Плата не відповідає (перевір WiFi/живлення)';
+  }
 };
 const buildGrid = () => {
   const grid = document.getElementById('effectGrid');
@@ -1206,6 +1210,8 @@ const loadLog = () => {
   fetch('/logdata').then(r => r.text()).then(t => {
     document.getElementById('log').innerText = t;
     window.scrollTo(0, document.body.scrollHeight);
+  }).catch(() => {
+    document.getElementById('log').innerText = '⚠️ Плата не відповідає, пробую ще...';
   });
 };
 loadLog();
