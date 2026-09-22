@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.1.4"
+#define FIRMWARE_VERSION "2.2.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -100,7 +100,7 @@ void logLinef(const char* fmt, ...) {
 #define LED_PIN     4
 #define NUM_LEDS    18           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
 #define LED_TYPE    WS2812B
-#define COLOR_ORDER BRG   // WS2811 12V-стрічки часто йдуть саме так, а не GRB як WS2812B
+#define COLOR_ORDER BRG   // підібрано емпірично під конкретну стрічку — не міняти
 
 uint8_t currentBrightness = 120; // 0-255, тепер керується з вебсторінки
 
@@ -450,19 +450,42 @@ void fxBouncingBalls() {
   static unsigned long lastUpdate = 0;
 
   if (!initedBalls) {
-    for (int i = 0; i < numBalls; i++) { ballPos[i] = 0; ballVel[i] = 3 + i * 1.5; }
+    for (int i = 0; i < numBalls; i++) {
+      ballPos[i] = NUM_LEDS - 1;       // Починаємо з вершини стрічки
+      ballVel[i] = 0;                  // Просто відпускаємо падати
+    }
     initedBalls = true;
   }
+
   if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
 
   fadeToBlackBy(leds, NUM_LEDS, 100);
+
+  // Фізичні коефіцієнти (підібрані під розмір стрічки)
+  const float gravity = -0.1;          // М'яка гравітація
+  const float bounceImpact = -0.90;    // Пружність відскоку (повертає 90% енергії)
+
   for (int i = 0; i < numBalls; i++) {
-    ballVel[i] -= 0.3; // "гравітація"
-    ballPos[i] += ballVel[i];
-    if (ballPos[i] < 0) { ballPos[i] = 0; ballVel[i] = -ballVel[i] * 0.85; } // відскок із втратою енергії
-    int idx = constrain((int)(ballPos[i] / 15.0 * NUM_LEDS), 0, NUM_LEDS - 1);
-    leds[idx] += CHSV(85 * i, 255, 255);
+    ballVel[i] += gravity;             // Додаємо гравітацію до швидкості
+    ballPos[i] += ballVel[i];          // Змінюємо позицію
+
+    // Перевірка удару об землю
+    if (ballPos[i] <= 0) {
+      ballPos[i] = 0;                  // Залишаємо на землі
+      ballVel[i] = ballVel[i] * bounceImpact; // Відскок вгору
+
+      // Анти-затухання: якщо енергії замало для підйому, штовхаємо надійно назад
+      if (ballVel[i] < 0.5) {
+        ballVel[i] = 2.0 + i * 0.5;
+      }
+    }
+
+    // Переводимо позицію напряму в індекс світлодіода
+    int idx = constrain((int)ballPos[i], 0, NUM_LEDS - 1);
+
+    // Малюємо м'ячик (явне присвоєння кольору, щоб не змішувались у білий)
+    leds[idx] = CHSV(85 * i, 255, 255);
   }
 }
 
@@ -637,6 +660,109 @@ void fxAurora() {
   noiseZ += 2; // повільніше за плазму — спокійний, "дихаючий" рух
 }
 
+// ---------- 33. Подвійне сканування (дві крапки назустріч) ----------
+void fxDualScan() {
+  static unsigned long lastUpdate = 0;
+  static int pos1 = 0, pos2 = 0;
+  static int dir1 = 1, dir2 = -1;
+  if (millis() - lastUpdate < 20) return;
+  lastUpdate = millis();
+  if (pos2 == 0) pos2 = NUM_LEDS - 1; // ініціалізація стартової позиції другої крапки
+
+  fadeToBlackBy(leds, NUM_LEDS, 60);
+  leds[pos1] = CRGB::Cyan;
+  leds[pos2] = CRGB::Magenta;
+  pos1 += dir1;
+  pos2 += dir2;
+  if (pos1 <= 0 || pos1 >= NUM_LEDS - 1) dir1 = -dir1;
+  if (pos2 <= 0 || pos2 >= NUM_LEDS - 1) dir2 = -dir2;
+}
+
+// ---------- 34. Сніжне мерехтіння (біле на чорному) ----------
+void fxSnowSparkle() {
+  fadeToBlackBy(leds, NUM_LEDS, 8);
+  if (random8() < 60) leds[random16(NUM_LEDS)] = CRGB::White;
+}
+
+// ---------- 35. Гелловінська доріжка (помаранчево-фіолетова) ----------
+void fxHalloweenChase() {
+  static unsigned long lastUpdate = 0;
+  static int pos = 0;
+  if (millis() - lastUpdate < 100) return;
+  lastUpdate = millis();
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = ((i + pos) % 4 < 2) ? CRGB::OrangeRed : CRGB(80, 0, 130); // помаранчевий / фіолетовий
+  }
+  pos++;
+}
+
+// ---------- 36. Заповнення з двох країв назустріч ----------
+void fxColorSweep() {
+  static unsigned long lastUpdate = 0;
+  static int step = 0;
+  if (millis() - lastUpdate < 40) return;
+  lastUpdate = millis();
+  int half = NUM_LEDS / 2;
+  if (step > half) { step = 0; FastLED.clear(); gHue += 40; }
+  if (step < NUM_LEDS - step) {
+    leds[step] = CHSV(gHue, 255, 255);
+    leds[NUM_LEDS - 1 - step] = CHSV(gHue, 255, 255);
+  }
+  step++;
+}
+
+// ---------- 37. Блимання суцільним кольором, що змінюється ----------
+void fxBlinkRainbow() {
+  static unsigned long lastUpdate = 0;
+  static bool on = false;
+  if (millis() - lastUpdate < 400) return;
+  lastUpdate = millis();
+  on = !on;
+  if (on) { fill_solid(leds, NUM_LEDS, CHSV(gHue, 255, 255)); gHue += 32; }
+  else fill_solid(leds, NUM_LEDS, CRGB::Black);
+}
+
+// ---------- 38. Мерехтіння свічки (теплий колір, що тремтить) ----------
+void fxFireFlicker() {
+  static unsigned long lastUpdate = 0;
+  if (millis() - lastUpdate < 50) return;
+  lastUpdate = millis();
+  for (int i = 0; i < NUM_LEDS; i++) {
+    uint8_t flicker = random8(180, 255);
+    leds[i] = CRGB(flicker, flicker / 3, 0); // теплий помаранчевий, що тремтить яскравістю
+  }
+}
+
+// ---------- 39. Обертання широких кольорових смуг ----------
+void fxRotatingBands() {
+  static unsigned long lastUpdate = 0;
+  static int offset = 0;
+  if (millis() - lastUpdate < 60) return;
+  lastUpdate = millis();
+  int bandSize = max(2, NUM_LEDS / 4);
+  for (int i = 0; i < NUM_LEDS; i++) {
+    uint8_t band = ((i + offset) / bandSize) % 4;
+    leds[i] = CHSV(band * 64, 255, 255);
+  }
+  offset++;
+}
+
+// ---------- 40. Чорний блок, що біжить по кольоровому фону ----------
+void fxChaseBlackout() {
+  static unsigned long lastUpdate = 0;
+  static int pos = 0;
+  if (millis() - lastUpdate < 60) return;
+  lastUpdate = millis();
+  fill_solid(leds, NUM_LEDS, CHSV(gHue, 255, 200));
+  int blockSize = max(2, NUM_LEDS / 6);
+  for (int i = 0; i < blockSize; i++) {
+    int idx = (pos + i) % NUM_LEDS;
+    leds[idx] = CRGB::Black;
+  }
+  pos = (pos + 1) % NUM_LEDS;
+  if (pos == 0) gHue += 30;
+}
+
 typedef void (*EffectFunc)();
 EffectFunc effects[] = {
   fxRainbowCycle, fxRainbowGlitter, fxConfetti, fxSinelon, fxBpm,
@@ -645,7 +771,9 @@ EffectFunc effects[] = {
   fxStrobe, fxRunningLights,
   fxFireworks, fxBouncingBalls, fxNoisePlasma, fxPoliceLights, fxGradientChase,
   fxSparkleFade, fxRainbowChase, fxSquarePulse, fxHeartbeat, fxRipple,
-  fxIceFire, fxMatrixRain, fxColorWheelRotate, fxRandomMarch, fxAurora
+  fxIceFire, fxMatrixRain, fxColorWheelRotate, fxRandomMarch, fxAurora,
+  fxDualScan, fxSnowSparkle, fxHalloweenChase, fxColorSweep, fxBlinkRainbow,
+  fxFireFlicker, fxRotatingBands, fxChaseBlackout
 };
 
 const char* effectNames[] = {
@@ -655,7 +783,9 @@ const char* effectNames[] = {
   "Стробоскоп", "Хвиля (running lights)",
   "Фейерверк", "Стрибучі м'ячики", "Шумова плазма", "Поліцейські вогні", "Блок кольору",
   "Густе мерехтіння", "Райдужна крапка", "Квадратні імпульси", "Серцебиття", "Брижі",
-  "Крижаний вогонь", "Матричний дощ", "Обертання кольорів", "Марш блоків", "Аврора"
+  "Крижаний вогонь", "Матричний дощ", "Обертання кольорів", "Марш блоків", "Аврора",
+  "Подвійне сканування", "Сніжне мерехтіння", "Гелловін", "Заповнення з країв", "Блимання кольором",
+  "Мерехтіння свічки", "Обертання смуг", "Чорний блок"
 };
 
 const uint8_t NUM_EFFECTS = sizeof(effects) / sizeof(effects[0]);
