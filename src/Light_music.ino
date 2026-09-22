@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.4.0"
+#define FIRMWARE_VERSION "2.4.1"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -926,7 +926,7 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <div class="grid" id="effectGrid"></div>
 
 <script>
-const EFFECT_NAMES = REPLACE_NAMES;
+let EFFECT_NAMES = [];
 const loadStatus = async () => {
   try {
     const r = await fetch('/status');
@@ -1085,25 +1085,33 @@ micSensSlider.addEventListener('change', () => {
   micSensDragging = false;
 });
 
-buildGrid();
-loadStatus();
-setInterval(loadStatus, 5000); // 2с -> 5с: менше TCP-з'єднань, менше навантаження на синхронний WebServer
+fetch('/effectnames').then(r => r.json()).then(names => {
+  EFFECT_NAMES = names;
+  buildGrid();
+  loadStatus();
+  setInterval(loadStatus, 5000); // 2с -> 5с: менше TCP-з'єднань, менше навантаження на синхронний WebServer
+});
 </script>
 </body>
 </html>
 )HTML";
 
 void handleRoot() {
-  // Підставляємо список назв ефектів у JS-масив прямо в HTML
-  String page = FPSTR(PAGE_HTML);
+  // Віддаємо HTML напряму з flash, без копіювання в String і без .replace() —
+  // ця операція раніше блокувала loop() (і разом з ним ефекти) на помітний час
+  // при кожному відкритті сторінки. Список назв ефектів тепер підвантажується
+  // окремим маленьким запитом з JS (handleEffectNames нижче).
+  server.send_P(200, "text/html", PAGE_HTML);
+}
+
+void handleEffectNames() {
   String namesJs = "[";
   for (int i = 0; i < NUM_EFFECTS; i++) {
     namesJs += "\"" + String(effectNames[i]) + "\"";
     if (i < NUM_EFFECTS - 1) namesJs += ",";
   }
   namesJs += "]";
-  page.replace("REPLACE_NAMES", namesJs);
-  server.send(200, "text/html", page);
+  server.send(200, "application/json", namesJs);
 }
 
 void handleStatus() {
@@ -1286,6 +1294,7 @@ void handleCheckUpdate() {
 void setupWebServer() {
   if (WiFi.status() != WL_CONNECTED) return;
   server.on("/", handleRoot);
+  server.on("/effectnames", handleEffectNames);
   server.on("/status", handleStatus);
   server.on("/effect", handleSetEffect);
   server.on("/auto", handleSetAuto);
