@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.6.3"
+#define FIRMWARE_VERSION "2.7.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -789,6 +789,29 @@ const char* WIFI_STATIC_PASSWORD = "";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
+void setupTime() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  // EET-2EEST,M3.5.0/3,M10.5.0/4 — часовий пояс Києва з автоматичним переходом на літній/зимовий час
+  configTzTime("EET-2EEST,M3.5.0/3,M10.5.0/4", "pool.ntp.org", "time.google.com");
+
+  unsigned long start = millis();
+  time_t now = time(nullptr);
+  while (now < 1700000000 && millis() - start < 3000) { // чекаємо максимум 3 сек
+    delay(100);
+    now = time(nullptr);
+  }
+
+  if (now >= 1700000000) {
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%d.%m.%Y %H:%M:%S", &timeinfo);
+    Serial.printf("[NTP] Час синхронізовано: %s\n", buf);
+  } else {
+    Serial.println("[NTP] Не вдалось синхронізувати час за 3 сек (спробує далі у фоні)");
+  }
+}
+
 void setupWiFi() {
   WiFi.persistent(true);
   WiFi.setAutoReconnect(true);
@@ -804,7 +827,7 @@ void setupWiFi() {
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("[WiFi] Статичне підключення успішне, IP: %s", WiFi.localIP().toString().c_str());
+      Serial.printf("[WiFi] Статичне підключення успішне, IP: %s\n", WiFi.localIP().toString().c_str());
       return;
     }
     Serial.println("[WiFi] Статичне підключення не вдалось, переходжу на WiFiManager...");
@@ -821,7 +844,7 @@ void setupWiFi() {
   );
   bool connected = wm.autoConnect("LightMusic-Setup");
   if (connected) {
-    Serial.printf("WiFi підключено, IP: %s", WiFi.localIP().toString().c_str());
+    Serial.printf("WiFi підключено, IP: %s\n", WiFi.localIP().toString().c_str());
   } else {
     Serial.println("WiFi не підключено — працюю офлайн (вебсторінка й OTA недоступні)");
   }
@@ -864,6 +887,7 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 </head>
 <body>
 <h1>Light_music</h1>
+<div id="clock" style="font-size:48px; font-weight:bold; text-align:center; margin:10px 0; letter-spacing:2px; color:#6cf;">--:--:--</div>
 <div id="status">Завантаження...</div>
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
@@ -914,6 +938,16 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 
 <script>
 let EFFECT_NAMES = [];
+let clockOffsetMs = null;
+const tickClock = () => {
+  if (clockOffsetMs === null) return;
+  const now = new Date(Date.now() + clockOffsetMs);
+  const pad = n => String(n).padStart(2, '0');
+  document.getElementById('clock').innerText =
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+};
+setInterval(tickClock, 1000);
+
 const loadStatus = async () => {
   try {
     const r = await fetch('/status');
@@ -923,6 +957,9 @@ const loadStatus = async () => {
       (s.auto && !s.mic ? ` | наступний через ${s.effectRemainingSec}с` : '') +
       ` | v${s.version}`;
     document.getElementById('updateStatus').innerText = 'Оновлення: ' + s.updateStatus;
+    if (s.epochSec > 1700000000) {
+      clockOffsetMs = s.epochSec * 1000 - Date.now();
+    }
     document.getElementById('micToggle').checked = s.mic;
     const staticBtn = document.getElementById('staticLightBtn');
     staticBtn.classList.toggle('active', s.staticLight);
@@ -1137,6 +1174,7 @@ void handleStatus() {
   doc["effectDuration"] = effectDuration / 1000; // в секундах для вебу
   unsigned long elapsed = millis() - lastSwitch;
   doc["effectRemainingSec"] = (effectDuration > elapsed) ? (effectDuration - elapsed) / 1000 : 0;
+  doc["epochSec"] = (unsigned long)time(nullptr);
   doc["micSensitivity"] = micSensitivity;
   doc["micDetectedBpm"] = micDetectedBpm;
   doc["version"] = FIRMWARE_VERSION;
@@ -1392,6 +1430,7 @@ void setup() {
   FastLED.show();
 
   setupWiFi();
+  setupTime();
   setupOTA();
   setupMDNS();
   setupWebServer();
@@ -1431,7 +1470,7 @@ void loop() {
     if (!wasWifiConnected) {
       // Щойно відновилось з'єднання (не просто перший запуск) — перезапускаємо
       // mDNS/OTA, бо вони інколи "не оживають" самі після реального обриву
-      Serial.printf("[WiFi] Підключення відновлено, IP: %s", WiFi.localIP().toString().c_str());
+      Serial.printf("[WiFi] Підключення відновлено, IP: %s\n", WiFi.localIP().toString().c_str());
       setupMDNS();
       setupOTA();
       wasWifiConnected = true;
