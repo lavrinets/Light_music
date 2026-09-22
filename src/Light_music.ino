@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.3.1"
+#define FIRMWARE_VERSION "2.3.3"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -340,8 +340,8 @@ void fxLarsonScanner() {
 
 void fxFire2012() {
   static byte heat[NUM_LEDS];
-  const byte cooling = 55, sparking = 120;
-  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 4)); // м'якше охолодження — стара формула надто агресивна для короткої стрічки
+  const byte cooling = 55, sparking = 90;
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 18)); // баланс під коротку стрічку: попередня спроба (0,4) давала перегрів до білого
   for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
   if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
   for (int j = 0; j < NUM_LEDS; j++) leds[j] = HeatColor(heat[j]);
@@ -601,8 +601,8 @@ void fxRipple() {
 // ---------- 28. Крижаний вогонь (Fire2012, синя палітра) ----------
 void fxIceFire() {
   static byte heat[NUM_LEDS];
-  const byte cooling = 55, sparking = 120;
-  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 4)); // м'якше охолодження — стара формула надто агресивна для короткої стрічки
+  const byte cooling = 55, sparking = 90;
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 18)); // баланс під коротку стрічку: попередня спроба (0,4) давала перегрів до білого
   for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
   if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
   for (int j = 0; j < NUM_LEDS; j++) {
@@ -1362,6 +1362,11 @@ void checkFirmwareUpdate() {
 //                          SETUP / LOOP
 // ================================================================
 
+// Стандартний стек loop()-задачі ESP32 — лише 8КБ, замало для такого обсягу коду
+// (WiFiManager + ArduinoJson + HTTPClient + FastLED на 40 ефектів + великі HTML-рядки).
+// Це офіційний спосіб від Espressif збільшити його без правки core-файлів.
+SET_LOOP_TASK_STACK_SIZE(24 * 1024);
+
 void setup() {
   bootTime = millis();
   Serial.begin(115200);
@@ -1410,6 +1415,13 @@ void loop() {
     }
   }
   buttonWasPressed = buttonPressed;
+
+  EVERY_N_SECONDS(60) {
+    UBaseType_t freeStack = uxTaskGetStackHighWaterMark(NULL);
+    if (freeStack < 1024) {
+      logLinef("[УВАГА] Мало вільного стеку: %u байт лишилось!", (unsigned)freeStack);
+    }
+  }
 
   if (WiFi.status() == WL_CONNECTED) {
     if (!wasWifiConnected) {
