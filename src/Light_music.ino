@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.3.3"
+#define FIRMWARE_VERSION "2.3.5"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -1083,7 +1083,7 @@ micSensSlider.addEventListener('change', () => {
 
 buildGrid();
 loadStatus();
-setInterval(loadStatus, 2000);
+setInterval(loadStatus, 5000); // 2с -> 5с: менше TCP-з'єднань, менше навантаження на синхронний WebServer
 </script>
 </body>
 </html>
@@ -1099,6 +1099,7 @@ void handleRoot() {
   }
   namesJs += "]";
   page.replace("REPLACE_NAMES", namesJs);
+  server.sendHeader("Connection", "close");
   server.send(200, "text/html", page);
 }
 
@@ -1120,6 +1121,7 @@ void handleStatus() {
   doc["updateStatus"] = lastUpdateCheckResult;
   String out;
   serializeJson(doc, out);
+  server.sendHeader("Connection", "close");
   server.send(200, "application/json", out);
 }
 
@@ -1134,6 +1136,7 @@ void handleSetEffect() {
       logLinef("[web] Обрано ефект вручну: %s\n", effectNames[i]);
     }
   }
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1142,6 +1145,7 @@ void handleSetAuto() {
   micEnabled = false;
   lastSwitch = millis();
   logLine("[web] Увімкнено авто-перемикання ефектів");
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1151,6 +1155,7 @@ void handleMic() {
     if (micEnabled) autoCycle = false;
     logLinef("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
   }
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1173,6 +1178,7 @@ void handleStaticLight() {
     }
   }
   logLinef("[web] Статичне світло: %s\n", staticLightEnabled ? "увімкнено" : "вимкнено");
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1203,11 +1209,12 @@ const loadLog = () => {
   });
 };
 loadLog();
-setInterval(loadLog, 2000);
+setInterval(loadLog, 5000); // те саме — менше навантаження на TCP-стек
 </script>
 </body>
 </html>
 )HTML";
+  server.sendHeader("Connection", "close");
   server.send(200, "text/html", page);
 }
 
@@ -1218,16 +1225,19 @@ void handleLogData() {
     if (logCount < MAX_LOG_LINES) idx = i; // поки буфер не заповнився — просто по порядку
     out += logBuffer[idx] + "\n";
   }
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", out);
 }
 
 void handleReboot() {
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK, перезавантажуюсь...");
   delay(200);
   ESP.restart();
 }
 
 void handleResetWifi() {
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK, перезавантажуюсь...");
   delay(200); // встигнути відправити відповідь перед перезавантаженням
   WiFiManager wm;
@@ -1243,6 +1253,7 @@ void handleMicSensitivity() {
       logLinef("[web] Чутливість мікрофона: %.0f\n", micSensitivity);
     }
   }
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1255,11 +1266,13 @@ void handleBrightness() {
       logLinef("[web] Яскравість: %d\n", currentBrightness);
     }
   }
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
 void handleApplySong() {
   if (!server.hasArg("bpm")) {
+    server.sendHeader("Connection", "close");
     server.send(400, "text/plain", "no bpm");
     return;
   }
@@ -1269,11 +1282,13 @@ void handleApplySong() {
   micEnabled = false;
   FastLED.clear();
   logLinef("[web] Застосовано темп: %.1f BPM\n", songBpm);
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
 void handleCheckUpdate() {
   forceUpdateCheck = true;
+  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK, перевіряю...");
 }
 
@@ -1300,9 +1315,19 @@ void setupWebServer() {
 // ---------- HTTP OTA: перевірка нової версії на Synology ----------
 void checkFirmwareUpdate() {
   static unsigned long lastCheck = 0;
+  static unsigned long lastFailedAttempt = 0;
+  const unsigned long FAILURE_COOLDOWN = 10000UL; // 10 сек — не бомбити повторними спробами одразу після невдачі
+
   if (WiFi.status() != WL_CONNECTED) return;
 
   bool forced = forceUpdateCheck;
+  if (lastFailedAttempt != 0 && millis() - lastFailedAttempt < FAILURE_COOLDOWN) {
+    if (forced) {
+      forceUpdateCheck = false;
+      lastUpdateCheckResult = "зачекай кілька секунд після попередньої невдалої спроби";
+    }
+    return;
+  }
   const unsigned long STARTUP_DELAY = 300000UL; // 5 хв — не блокувати щойно піднятий вебсервер одразу після старту
   if (!forced && millis() - bootTime < STARTUP_DELAY) return;
   if (!forced && lastCheck != 0 && millis() - lastCheck < UPDATE_CHECK_INTERVAL) return;
@@ -1316,6 +1341,8 @@ void checkFirmwareUpdate() {
   if (!http.begin(client, FIRMWARE_UPDATE_URL)) {
     logLine("[OTA] Не вдалось відкрити з'єднання для перевірки версії");
     lastUpdateCheckResult = "помилка з'єднання";
+    lastFailedAttempt = millis();
+    client.stop();
     return;
   }
 
@@ -1342,6 +1369,7 @@ void checkFirmwareUpdate() {
         if (ret == HTTP_UPDATE_FAILED) {
           logLinef("[OTA] Помилка оновлення: %s\n", httpUpdate.getLastErrorString().c_str());
           lastUpdateCheckResult = "помилка оновлення: " + String(httpUpdate.getLastErrorString().c_str());
+          lastFailedAttempt = millis();
         }
         // при успіху плата сама перезавантажиться
       } else {
@@ -1354,8 +1382,10 @@ void checkFirmwareUpdate() {
   } else {
     logLinef("[OTA] Не вдалось перевірити версію, код: %d\n", code);
     lastUpdateCheckResult = "помилка перевірки, код " + String(code);
+    lastFailedAttempt = millis();
   }
   http.end();
+  client.stop();
 }
 
 // ================================================================
