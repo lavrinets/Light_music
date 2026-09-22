@@ -1103,7 +1103,6 @@ void handleRoot() {
   }
   namesJs += "]";
   page.replace("REPLACE_NAMES", namesJs);
-  server.sendHeader("Connection", "close");
   server.send(200, "text/html", page);
 }
 
@@ -1125,7 +1124,6 @@ void handleStatus() {
   doc["updateStatus"] = lastUpdateCheckResult;
   String out;
   serializeJson(doc, out);
-  server.sendHeader("Connection", "close");
   server.send(200, "application/json", out);
 }
 
@@ -1140,7 +1138,6 @@ void handleSetEffect() {
       logLinef("[web] Обрано ефект вручну: %s\n", effectNames[i]);
     }
   }
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1149,7 +1146,6 @@ void handleSetAuto() {
   micEnabled = false;
   lastSwitch = millis();
   logLine("[web] Увімкнено авто-перемикання ефектів");
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1159,7 +1155,6 @@ void handleMic() {
     if (micEnabled) autoCycle = false;
     logLinef("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
   }
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1182,7 +1177,6 @@ void handleStaticLight() {
     }
   }
   logLinef("[web] Статичне світло: %s\n", staticLightEnabled ? "увімкнено" : "вимкнено");
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1220,7 +1214,6 @@ setInterval(loadLog, 5000); // те саме — менше навантажен
 </body>
 </html>
 )HTML";
-  server.sendHeader("Connection", "close");
   server.send(200, "text/html", page);
 }
 
@@ -1231,19 +1224,16 @@ void handleLogData() {
     if (logCount < MAX_LOG_LINES) idx = i; // поки буфер не заповнився — просто по порядку
     out += logBuffer[idx] + "\n";
   }
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", out);
 }
 
 void handleReboot() {
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK, перезавантажуюсь...");
   delay(200);
   ESP.restart();
 }
 
 void handleResetWifi() {
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK, перезавантажуюсь...");
   delay(200); // встигнути відправити відповідь перед перезавантаженням
   WiFiManager wm;
@@ -1259,7 +1249,6 @@ void handleMicSensitivity() {
       logLinef("[web] Чутливість мікрофона: %.0f\n", micSensitivity);
     }
   }
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1272,13 +1261,11 @@ void handleBrightness() {
       logLinef("[web] Яскравість: %d\n", currentBrightness);
     }
   }
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
 void handleApplySong() {
   if (!server.hasArg("bpm")) {
-    server.sendHeader("Connection", "close");
     server.send(400, "text/plain", "no bpm");
     return;
   }
@@ -1288,13 +1275,11 @@ void handleApplySong() {
   micEnabled = false;
   FastLED.clear();
   logLinef("[web] Застосовано темп: %.1f BPM\n", songBpm);
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK");
 }
 
 void handleCheckUpdate() {
   forceUpdateCheck = true;
-  server.sendHeader("Connection", "close");
   server.send(200, "text/plain", "OK, перевіряю...");
 }
 
