@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.2.0"
+#define FIRMWARE_VERSION "2.3.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -133,7 +133,7 @@ WebServer server(80);
 
 #define SAMPLES         512
 #define SAMPLING_FREQ   40000
-#define NUM_BANDS       8
+#define NUM_BANDS       6   // 18 LED / 6 смуг = рівно 3 пікселі на смугу, без залишку (раніше 8 лишало 2 діоди завжди чорними)
 
 double vReal[SAMPLES];
 double vImag[SAMPLES];
@@ -341,7 +341,7 @@ void fxLarsonScanner() {
 void fxFire2012() {
   static byte heat[NUM_LEDS];
   const byte cooling = 55, sparking = 120;
-  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2));
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 4)); // м'якше охолодження — стара формула надто агресивна для короткої стрічки
   for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
   if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
   for (int j = 0; j < NUM_LEDS; j++) leds[j] = HeatColor(heat[j]);
@@ -350,7 +350,7 @@ void fxFire2012() {
 void fxMeteorRain() {
   static unsigned long lastUpdate = 0;
   static int meteorPos = 0;
-  const byte meteorSize = 8, meteorTrailDecay = 64;
+  const byte meteorSize = 3, meteorTrailDecay = 96; // менший метеор і швидший шлейф — для 18-пиксельної стрічки
   if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
@@ -602,7 +602,7 @@ void fxRipple() {
 void fxIceFire() {
   static byte heat[NUM_LEDS];
   const byte cooling = 55, sparking = 120;
-  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2));
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 4)); // м'якше охолодження — стара формула надто агресивна для короткої стрічки
   for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
   if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
   for (int j = 0; j < NUM_LEDS; j++) {
@@ -1435,11 +1435,15 @@ void loop() {
   }
 
   if (staticLightEnabled) {
-    fill_solid(leds, NUM_LEDS, staticColor);
+    EVERY_N_MILLISECONDS(50) {
+      fill_solid(leds, NUM_LEDS, staticColor);
+      FastLED.show();
+    }
   } else if (micEnabled) {
     readAudioAndFFT();
     renderSpectrum();
     detectBeatAndUpdateBpm();
+    FastLED.show();
   } else {
     unsigned long now = millis();
     if (autoCycle && now - lastSwitch >= EFFECT_DURATION) {
@@ -1455,9 +1459,12 @@ void loop() {
         logLinef("До зміни ефекту (%s): %lu сек\n", effectNames[currentEffect], remainingSec);
       }
     }
-    effects[currentEffect]();
+    // Фіксований кадр ~60 FPS замість delay(10) — сталіша частота кадрів,
+    // і loop() крутиться швидше між кадрами, встигаючи частіше обслуговувати
+    // веб-сервер/OTA/кнопку, поки чекає наступного кадру
+    EVERY_N_MILLISECONDS(16) {
+      effects[currentEffect]();
+      FastLED.show();
+    }
   }
-
-  FastLED.show();
-  delay(10);
 }
