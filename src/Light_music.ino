@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.7.1"
+#define FIRMWARE_VERSION "2.8.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -812,9 +812,27 @@ void setupTime() {
   }
 }
 
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.printf("[WiFi-подія] Розрив з'єднання, причина: %d\n", info.wifi_sta_disconnected.reason);
+      break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      Serial.println("[WiFi-подія] STA підключено до точки доступу");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Serial.printf("[WiFi-подія] Отримано IP: %s, RSSI: %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      break;
+    default:
+      break;
+  }
+}
+
 void setupWiFi() {
+  WiFi.onEvent(onWiFiEvent);
   WiFi.persistent(true);
   WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false); // вимикає modem-sleep — радіо завжди активне, без затримок на "прокидання"
 
   // Спершу пробуємо статичний WiFi, якщо він заданий (не порожній)
   if (strlen(WIFI_STATIC_SSID) > 0) {
@@ -1463,6 +1481,9 @@ void loop() {
     UBaseType_t freeStack = uxTaskGetStackHighWaterMark(NULL);
     if (freeStack < 1024) {
       Serial.printf("[УВАГА] Мало вільного стеку: %u байт лишилось!", (unsigned)freeStack);
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.printf("[WiFi] RSSI: %d dBm\n", WiFi.RSSI());
     }
   }
 
