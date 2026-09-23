@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "3.0.0"
+#define FIRMWARE_VERSION "3.0.2"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -1001,7 +1001,7 @@ const loadStatus = async () => {
       clockOffsetMs = s.epochSec * 1000 - Date.now();
     }
     const tempEl = document.getElementById('chipTemp');
-    tempEl.innerText = `🌡️ ${s.chipTemp.toFixed(1)} °C`;
+    tempEl.innerText = s.chipTemp > 0 ? `🌡️ ${s.chipTemp.toFixed(1)} °C` : '🌡️ н/д';
     tempEl.style.color = s.chipTemp > 65 ? '#f55' : '#888'; // попередження, якщо гаряче
     document.getElementById('micToggle').checked = s.mic;
     const staticBtn = document.getElementById('staticLightBtn');
@@ -1473,7 +1473,9 @@ void setup() {
   FastLED.clear();
   FastLED.show();
 
-  setupTempSensor();
+  // setupTempSensor(); // ВИМКНЕНО: задокументована апаратна колізія температурного
+  // датчика з WiFi-радіо на ESP32-C3 (спільний RF/аналоговий ресурс) — спричиняла
+  // нескінченний цикл розривів автентифікації одразу після старту. WiFi важливіший.
   setupWiFi();
   setupTime();
   setupOTA();
