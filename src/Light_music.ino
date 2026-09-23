@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "3.0.2"
+#define FIRMWARE_VERSION "3.1.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -795,17 +795,23 @@ temperature_sensor_handle_t tempSensorHandle = NULL;
 void setupTempSensor() {
   temperature_sensor_config_t tempSensorConfig = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 80);
   if (temperature_sensor_install(&tempSensorConfig, &tempSensorHandle) == ESP_OK) {
-    temperature_sensor_enable(tempSensorHandle);
-    Serial.println("[Темп.] Датчик температури чіпа готовий");
+    // НЕ вмикаємо тут — тільки install(). enable()/disable() робимо навколо
+    // кожного окремого виміру (readChipTemperature), щоб мінімізувати час,
+    // коли датчик і WiFi-радіо конкурують за спільний RF/аналоговий ресурс.
+    Serial.println("[Темп.] Датчик температури чіпа встановлено (вмикається лише на момент виміру)");
   } else {
     Serial.println("[Темп.] Не вдалось ініціалізувати датчик температури");
+    tempSensorHandle = NULL;
   }
 }
 
 float readChipTemperature() {
   float tempC = 0;
   if (tempSensorHandle) {
-    temperature_sensor_get_celsius(tempSensorHandle, &tempC);
+    if (temperature_sensor_enable(tempSensorHandle) == ESP_OK) {
+      temperature_sensor_get_celsius(tempSensorHandle, &tempC);
+      temperature_sensor_disable(tempSensorHandle);
+    }
   }
   return tempC;
 }
@@ -1473,10 +1479,9 @@ void setup() {
   FastLED.clear();
   FastLED.show();
 
-  // setupTempSensor(); // ВИМКНЕНО: задокументована апаратна колізія температурного
-  // датчика з WiFi-радіо на ESP32-C3 (спільний RF/аналоговий ресурс) — спричиняла
-  // нескінченний цикл розривів автентифікації одразу після старту. WiFi важливіший.
   setupWiFi();
+  setupTempSensor(); // після WiFi — install() не заважає самому підключенню;
+                      // enable/disable навколо кожного виміру далі мінімізує конфлікт
   setupTime();
   setupOTA();
   setupMDNS();
