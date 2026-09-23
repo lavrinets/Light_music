@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "2.9.1"
+#define FIRMWARE_VERSION "3.0.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -70,6 +70,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 #include <ArduinoJson.h>
 #include <driver/i2s_std.h>
 #include <ArduinoFFT.h>
+#include "driver/temperature_sensor.h"
 
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     4
@@ -789,6 +790,26 @@ const char* WIFI_STATIC_PASSWORD = "";
 const unsigned long WIFI_STATIC_TIMEOUT_MS = 10000;
 // ================================================================================
 
+temperature_sensor_handle_t tempSensorHandle = NULL;
+
+void setupTempSensor() {
+  temperature_sensor_config_t tempSensorConfig = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 80);
+  if (temperature_sensor_install(&tempSensorConfig, &tempSensorHandle) == ESP_OK) {
+    temperature_sensor_enable(tempSensorHandle);
+    Serial.println("[Темп.] Датчик температури чіпа готовий");
+  } else {
+    Serial.println("[Темп.] Не вдалось ініціалізувати датчик температури");
+  }
+}
+
+float readChipTemperature() {
+  float tempC = 0;
+  if (tempSensorHandle) {
+    temperature_sensor_get_celsius(tempSensorHandle, &tempC);
+  }
+  return tempC;
+}
+
 void setupTime() {
   if (WiFi.status() != WL_CONNECTED) return;
   // EET-2EEST,M3.5.0/3,M10.5.0/4 — часовий пояс Києва з автоматичним переходом на літній/зимовий час
@@ -906,6 +927,7 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <body>
 <h1>Light_music</h1>
 <div id="clock" style="font-size:48px; font-weight:bold; text-align:center; margin:10px 0; letter-spacing:2px; color:#6cf;">--:--:--</div>
+<div id="chipTemp" style="text-align:center; font-size:14px; color:#888; margin-bottom:16px;">🌡️ -- °C</div>
 <div id="status">Завантаження...</div>
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
@@ -978,6 +1000,9 @@ const loadStatus = async () => {
     if (s.epochSec > 1700000000) {
       clockOffsetMs = s.epochSec * 1000 - Date.now();
     }
+    const tempEl = document.getElementById('chipTemp');
+    tempEl.innerText = `🌡️ ${s.chipTemp.toFixed(1)} °C`;
+    tempEl.style.color = s.chipTemp > 65 ? '#f55' : '#888'; // попередження, якщо гаряче
     document.getElementById('micToggle').checked = s.mic;
     const staticBtn = document.getElementById('staticLightBtn');
     staticBtn.classList.toggle('active', s.staticLight);
@@ -1193,6 +1218,7 @@ void handleStatus() {
   unsigned long elapsed = millis() - lastSwitch;
   doc["effectRemainingSec"] = (effectDuration > elapsed) ? (effectDuration - elapsed) / 1000 : 0;
   doc["epochSec"] = (unsigned long)time(nullptr);
+  doc["chipTemp"] = readChipTemperature();
   doc["micSensitivity"] = micSensitivity;
   doc["micDetectedBpm"] = micDetectedBpm;
   doc["version"] = FIRMWARE_VERSION;
@@ -1447,6 +1473,7 @@ void setup() {
   FastLED.clear();
   FastLED.show();
 
+  setupTempSensor();
   setupWiFi();
   setupTime();
   setupOTA();
