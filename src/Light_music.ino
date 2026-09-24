@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "3.4.1"
+#define FIRMWARE_VERSION "3.5.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -74,8 +74,8 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     4
 #define NUM_LEDS    18           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
-#define LED_TYPE    WS2812B
-#define COLOR_ORDER BRG   // підібрано емпірично під конкретну стрічку — не міняти
+#define LED_TYPE    SK6812   // RGBW-стрічка (окремий білий кристал) — SK6812, не WS2812B
+#define COLOR_ORDER GRB   // скинуто на стандартний під НОВУ стрічку — BRG був підібраний під стару 12V-стрічку
 
 uint8_t currentBrightness = 5; // 0-255, тепер керується з вебсторінки
 
@@ -1445,7 +1445,7 @@ void setup() {
 
   pinMode(WIFI_RESET_BUTTON_PIN, INPUT_PULLUP);
 
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setRgbw();
   FastLED.setBrightness(currentBrightness);
   FastLED.clear();
   FastLED.show();
