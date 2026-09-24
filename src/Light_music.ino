@@ -24,6 +24,12 @@
     I2S_SCK    = 6   -> SCK мікрофона
     I2S_WS     = 7   -> WS (LRCL) мікрофона
     I2S_SD     = 5   -> SD (DOUT) мікрофона
+    GPIO9      -> кнопка скидання WiFi #1 (вбудована BOOT-кнопка плати)
+    GPIO10     -> кнопка скидання WiFi #2 (окрема виносна кнопка, опційно;
+                  одна нога кнопки на GPIO10, друга на GND, нічого більше не треба —
+                  внутрішній підтягуючий резистор увімкнений програмно)
+    Утримати БУДЬ-ЯКУ з цих двох кнопок 5 секунд -> скидає збережений WiFi
+    і перезавантажує плату в режим налаштування (LightMusic-Setup).
 
   === НАЛАШТУВАННЯ НА SYNOLOGY ===
   Постав пакет Web Station (або просто розшар папку через File Station з веб-доступом).
@@ -42,7 +48,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "4.2.0"
+#define FIRMWARE_VERSION "4.3.1"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -80,9 +86,11 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 uint8_t currentBrightness = 5; // 0-255, тепер керується з вебсторінки
 float effectSpeedFactor = 1.0; // множник швидкості "рухомих" ефектів: >1 швидше, <1 повільніше
 
-// ---------- ФІЗИЧНА КНОПКА СКИДАННЯ WIFI ----------
-#define WIFI_RESET_BUTTON_PIN 9   // BOOT-кнопка на більшості ESP32-C3 плат
-#define WIFI_RESET_HOLD_MS 5000   // утримувати 5 сек, щоб скинути WiFi
+// ---------- ФІЗИЧНІ КНОПКИ СКИДАННЯ WIFI (будь-яка з двох, утримання 5 сек) ----------
+#define WIFI_RESET_BUTTON_PIN 9      // BOOT-кнопка на більшості ESP32-C3 плат (вбудована)
+#define WIFI_RESET_BUTTON_PIN2 10    // окрема виносна кнопка — вільний GPIO, не strapping-пін,
+                                      // підключити просто: одна нога кнопки на GPIO10, друга на GND
+#define WIFI_RESET_HOLD_MS 5000      // утримувати 5 сек, щоб скинути WiFi
 unsigned long buttonPressStart = 0;
 bool buttonWasPressed = false;
 
@@ -316,11 +324,18 @@ void fxLarsonScanner() {
 
 void fxFire2012() {
   static byte heat[NUM_LEDS];
-  const byte cooling = 55, sparking = 90;
-  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2)); // формула масштабується під довжину стрічки — тепер знову доречна для 118 LED
-  for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
-  if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
-  for (int j = 0; j < NUM_LEDS; j++) leds[j] = HeatColor(heat[j]);
+  const byte cooling = 55, sparking = 45; // менше іскор і м'якіше (було 90) — спокійніше полум'я
+
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, (((cooling * 10) / NUM_LEDS) + 2) / 2)); // повільніше охолодження — плавніший рух
+  // Подвійне згладжування форми полум'я замість одинарного — прибирає різкі "зубці"
+  for (int pass = 0; pass < 2; pass++) {
+    for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
+  }
+  if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(100, 180)); } // м'якші іскри (було 160-255)
+
+  // Повільне "дихання" загальної яскравості — органічний рух, як у справжньої свічки
+  uint8_t breath = beatsin8(8, 200, 255);
+  for (int j = 0; j < NUM_LEDS; j++) leds[j] = HeatColor(scale8(heat[j], breath));
 }
 
 void fxMeteorRain() {
@@ -1490,6 +1505,7 @@ void setup() {
   prefs.putString("version", FIRMWARE_VERSION);
 
   pinMode(WIFI_RESET_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(WIFI_RESET_BUTTON_PIN2, INPUT_PULLUP);
 
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setBrightness(currentBrightness);
@@ -1510,8 +1526,8 @@ void setup() {
 }
 
 void loop() {
-  // ---- Фізична кнопка: утримання 5 сек скидає WiFi ----
-  bool buttonPressed = (digitalRead(WIFI_RESET_BUTTON_PIN) == LOW);
+  // ---- Фізична кнопка: утримання 5 сек скидає WiFi (будь-яка з двох — BOOT або виносна) ----
+  bool buttonPressed = (digitalRead(WIFI_RESET_BUTTON_PIN) == LOW) || (digitalRead(WIFI_RESET_BUTTON_PIN2) == LOW);
   if (buttonPressed && !buttonWasPressed) {
     buttonPressStart = millis();
   }
