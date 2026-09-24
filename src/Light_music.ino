@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "4.1.0"
+#define FIRMWARE_VERSION "4.1.1"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -950,7 +950,7 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
   <input type="range" id="durationSlider" min="5" max="120" value="30">
   <span id="durationValue" style="min-width:60px;">30 сек</span>
 </div>
-<div class="row">
+<div class="row" id="speedRow">
   <span style="min-width:90px;">Швидкість</span>
   <span>🐌</span>
   <input type="range" id="speedSlider" min="25" max="400" value="100">
@@ -968,6 +968,9 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 
 <script>
 let EFFECT_NAMES = [];
+// Індекси ефектів, для яких повзунок швидкості реально щось змінює
+// (решта або статичні, або оновлюються щокадру без власного темпу руху)
+const SPEED_APPLICABLE_INDICES = new Set([6,7,8,10,14,15,17,18,20,21,23,24,26,28,29,30,32,34,35,36,37,38,39]);
 let clockOffsetMs = null;
 const tickClock = () => {
   if (clockOffsetMs === null) return;
@@ -1022,6 +1025,8 @@ const loadStatus = async () => {
     document.getElementById('speedSlider').value = s.effectSpeed;
     document.getElementById('speedValue').innerText = s.effectSpeed + '%';
   }
+  const speedApplies = !s.mic && !s.staticLight && SPEED_APPLICABLE_INDICES.has(s.index);
+  document.getElementById('speedRow').style.display = speedApplies ? 'flex' : 'none';
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
   });
