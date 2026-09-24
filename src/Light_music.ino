@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "4.1.1"
+#define FIRMWARE_VERSION "4.2.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -453,7 +453,7 @@ void fxBouncingBalls() {
       ballVel[i] = ballVel[i] * bounceImpact; // Відскок вгору
 
       // Анти-затухання: якщо енергії замало для підйому, штовхаємо надійно назад
-      if (ballVel[i] < 0.5) {
+      if (ballVel[i] < 3.0) { // раніше 0.5 — стрибки встигали згаснути до 8-12 пикселів перш ніж спрацьовувало
         ballVel[i] = 5.0 + i * 1.3; // сильніший поштовх — видимий відскок на висоту ~35-70 пикселів
       }
     }
@@ -1025,7 +1025,7 @@ const loadStatus = async () => {
     document.getElementById('speedSlider').value = s.effectSpeed;
     document.getElementById('speedValue').innerText = s.effectSpeed + '%';
   }
-  const speedApplies = !s.mic && !s.staticLight && SPEED_APPLICABLE_INDICES.has(s.index);
+  const speedApplies = !s.mic && !s.staticLight && !s.auto && SPEED_APPLICABLE_INDICES.has(s.index);
   document.getElementById('speedRow').style.display = speedApplies ? 'flex' : 'none';
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
@@ -1575,8 +1575,9 @@ void loop() {
     if (autoCycle && now - lastSwitch >= effectDuration) {
       lastSwitch = now;
       currentEffect = (currentEffect + 1) % NUM_EFFECTS;
+      effectSpeedFactor = random(50, 201) / 100.0; // випадкова швидкість 50%-200% для кожного нового ефекту в авто-режимі
       FastLED.clear();
-      Serial.printf("Перемикаю на ефект %d/%d: %s\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect]);
+      Serial.printf("Перемикаю на ефект %d/%d: %s (швидкість %.0f%%)\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect], effectSpeedFactor * 100);
     }
     // Фіксований кадр ~60 FPS замість delay(10) — сталіша частота кадрів,
     // і loop() крутиться швидше між кадрами, встигаючи частіше обслуговувати
