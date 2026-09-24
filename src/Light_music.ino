@@ -73,7 +73,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     4
-#define NUM_LEDS    18           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
+#define NUM_LEDS    116           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
 #define LED_TYPE    SK6812   // RGBW-стрічка (окремий білий кристал) — SK6812, не WS2812B
 #define COLOR_ORDER GRB   // скинуто на стандартний під НОВУ стрічку — BRG був підібраний під стару 12V-стрічку
 
