@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "3.5.1"
+#define FIRMWARE_VERSION "4.0.1"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -73,7 +73,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     4
-#define NUM_LEDS    116           // <-- 54 фізичних LED / 3 на піксель (12V WS2811-стрічка)
+#define NUM_LEDS    118          // <-- 118 фізичних адресованих LED (кожен зі своїм контролером)
 #define LED_TYPE    WS2812B  // звичайна RGB-стрічка (3 контакти: +5V, DIN/DO, GND — не RGBW)
 #define COLOR_ORDER GRB   // скинуто на стандартний під НОВУ стрічку — BRG був підібраний під стару 12V-стрічку
 
@@ -108,7 +108,7 @@ WebServer server(80);
 
 #define SAMPLES         512
 #define SAMPLING_FREQ   40000
-#define NUM_BANDS       6   // 18 LED / 6 смуг = рівно 3 пікселі на смугу, без залишку (раніше 8 лишало 2 діоди завжди чорними)
+#define NUM_BANDS       10  // 118 LED / 10 смуг ≈ 11 пікселів на смугу — детальніший спектр на довгій стрічці
 
 double vReal[SAMPLES];
 double vImag[SAMPLES];
@@ -294,7 +294,7 @@ void fxColorWipe() {
   static int pos = 0;
   static uint8_t colorIndex = 0;
   static const CRGB colors[] = {CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::Yellow, CRGB::Cyan, CRGB::Magenta};
-  if (millis() - lastUpdate < 50) return;
+  if (millis() - lastUpdate < 30) return;
   lastUpdate = millis();
   leds[pos] = colors[colorIndex % 6];
   pos++;
@@ -305,7 +305,7 @@ void fxLarsonScanner() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
   static int dir = 1;
-  if (millis() - lastUpdate < 45) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 60);
   leds[pos] = CRGB::Red;
@@ -316,7 +316,7 @@ void fxLarsonScanner() {
 void fxFire2012() {
   static byte heat[NUM_LEDS];
   const byte cooling = 55, sparking = 90;
-  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 18)); // баланс під коротку стрічку: попередня спроба (0,4) давала перегрів до білого
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2)); // формула масштабується під довжину стрічки — тепер знову доречна для 118 LED
   for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
   if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
   for (int j = 0; j < NUM_LEDS; j++) leds[j] = HeatColor(heat[j]);
@@ -325,8 +325,8 @@ void fxFire2012() {
 void fxMeteorRain() {
   static unsigned long lastUpdate = 0;
   static int meteorPos = 0;
-  const byte meteorSize = 3, meteorTrailDecay = 96; // менший метеор і швидший шлейф — для 18-пиксельної стрічки
-  if (millis() - lastUpdate < 40) return;
+  const byte meteorSize = 10, meteorTrailDecay = 64; // більший метеор і довший шлейф — під 118-пиксельну стрічку
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     if (random8(10) > 5) leds[i].fadeToBlackBy(meteorTrailDecay);
@@ -361,7 +361,7 @@ void fxPlasma() {
 void fxComet() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 55) return;
+  if (millis() - lastUpdate < 25) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 90);
   leds[pos] = CHSV(gHue, 255, 255);
@@ -437,8 +437,9 @@ void fxBouncingBalls() {
 
   fadeToBlackBy(leds, NUM_LEDS, 100);
 
-  // Фізичні коефіцієнти (підібрані під розмір стрічки)
-  const float gravity = -0.1;          // М'яка гравітація
+  // Фізичні коефіцієнти (масштабовано під 118-пиксельну стрічку — на короткій
+  // ці ж числа давали занадто мляве падіння й ледь помітний відскок)
+  const float gravity = -0.35;         // сильніша гравітація — швидше падіння на довгій дистанції
   const float bounceImpact = -0.90;    // Пружність відскоку (повертає 90% енергії)
 
   for (int i = 0; i < numBalls; i++) {
@@ -452,7 +453,7 @@ void fxBouncingBalls() {
 
       // Анти-затухання: якщо енергії замало для підйому, штовхаємо надійно назад
       if (ballVel[i] < 0.5) {
-        ballVel[i] = 2.0 + i * 0.5;
+        ballVel[i] = 5.0 + i * 1.3; // сильніший поштовх — видимий відскок на висоту ~35-70 пикселів
       }
     }
 
@@ -492,7 +493,7 @@ void fxPoliceLights() {
 void fxGradientChase() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 55) return;
+  if (millis() - lastUpdate < 30) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 255);
   int blockSize = max(3, NUM_LEDS / 6);
@@ -515,7 +516,7 @@ void fxSparkleFade() {
 void fxRainbowChase() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 55) return;
+  if (millis() - lastUpdate < 30) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 60);
   leds[pos] = CHSV(gHue, 255, 255);
@@ -527,7 +528,7 @@ void fxRainbowChase() {
 void fxSquarePulse() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < 60) return;
+  if (millis() - lastUpdate < 40) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ((i + pos) % 6 < 3) ? CRGB(CHSV(gHue, 255, 255)) : CRGB::Black;
@@ -558,7 +559,7 @@ void fxRipple() {
   static unsigned long lastUpdate = 0;
   static int center = -1;
   static float radius = 0;
-  if (millis() - lastUpdate < 45) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
 
   if (center < 0) { center = random16(NUM_LEDS); radius = 0; }
@@ -577,7 +578,7 @@ void fxRipple() {
 void fxIceFire() {
   static byte heat[NUM_LEDS];
   const byte cooling = 55, sparking = 90;
-  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, 18)); // баланс під коротку стрічку: попередня спроба (0,4) давала перегрів до білого
+  for (int i = 0; i < NUM_LEDS; i++) heat[i] = qsub8(heat[i], random8(0, ((cooling * 10) / NUM_LEDS) + 2)); // формула масштабується під довжину стрічки — тепер знову доречна для 118 LED
   for (int k = NUM_LEDS - 1; k >= 2; k--) heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
   if (random8() < sparking) { int y = random8(7); heat[y] = qadd8(heat[y], random8(160, 255)); }
   for (int j = 0; j < NUM_LEDS; j++) {
@@ -640,7 +641,7 @@ void fxDualScan() {
   static unsigned long lastUpdate = 0;
   static int pos1 = 0, pos2 = 0;
   static int dir1 = 1, dir2 = -1;
-  if (millis() - lastUpdate < 45) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
   if (pos2 == 0) pos2 = NUM_LEDS - 1; // ініціалізація стартової позиції другої крапки
 
@@ -675,7 +676,7 @@ void fxHalloweenChase() {
 void fxColorSweep() {
   static unsigned long lastUpdate = 0;
   static int step = 0;
-  if (millis() - lastUpdate < 60) return;
+  if (millis() - lastUpdate < 40) return;
   lastUpdate = millis();
   int half = NUM_LEDS / 2;
   if (step > half) { step = 0; FastLED.clear(); gHue += 40; }
