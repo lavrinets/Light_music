@@ -42,7 +42,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "3.3.1"
+#define FIRMWARE_VERSION "3.4.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -772,8 +772,6 @@ unsigned long bootTime = 0; // час старту — щоб відкласти
 String lastUpdateCheckResult = "ще не перевірялось";
 Preferences prefs;
 
-unsigned long lastWifiReconnectAttempt = 0;
-const unsigned long WIFI_RECONNECT_INTERVAL = 30000; // спроба раз на 30 сек, поки WiFi відсутній
 bool wasWifiConnected = false;
 
 // ================================================================
@@ -875,10 +873,15 @@ void setupOTA() {
   Serial.println("ArduinoOTA готовий (заливка прошивки по WiFi з PlatformIO)");
 }
 
+bool mdnsServiceAdded = false;
+
 void setupMDNS() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (MDNS.begin(OTA_HOSTNAME)) {
-    MDNS.addService("http", "tcp", 80);
+    if (!mdnsServiceAdded) { // не додавати сервіс повторно при перепідключенні
+      MDNS.addService("http", "tcp", 80);
+      mdnsServiceAdded = true;
+    }
     Serial.printf("mDNS готовий — відкривай http://%s.local\n", OTA_HOSTNAME);
   } else {
     Serial.println("Не вдалось запустити mDNS");
@@ -1505,13 +1508,10 @@ void loop() {
     if (forceUpdateCheck) checkFirmwareUpdate();
   } else {
     wasWifiConnected = false;
-    // WiFi відпав — пробуємо перепідключитись раз на WIFI_RECONNECT_INTERVAL,
-    // не блокуючи основний цикл (ефекти й далі йдуть, поки чекаємо мережу)
-    if (millis() - lastWifiReconnectAttempt >= WIFI_RECONNECT_INTERVAL) {
-      lastWifiReconnectAttempt = millis();
-      Serial.println("[WiFi] З'єднання втрачено, пробую перепідключитись...");
-      WiFi.reconnect();
-    }
+    // Ручний WiFi.reconnect() прибрано: викликаний одночасно з увімкненим
+    // WiFi.setAutoReconnect(true), він конфліктував із вбудованим механізмом
+    // драйвера ("wifi:sta is connecting, return error" в логах) і спричиняв
+    // шквал розривів автентифікації щосекунди. Довіряємо тільки вбудованому.
   }
 
   if (staticLightEnabled) {
