@@ -48,7 +48,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "4.3.1"
+#define FIRMWARE_VERSION "4.4.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -84,7 +84,6 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 #define COLOR_ORDER GRB   // скинуто на стандартний під НОВУ стрічку — BRG був підібраний під стару 12V-стрічку
 
 uint8_t currentBrightness = 5; // 0-255, тепер керується з вебсторінки
-float effectSpeedFactor = 1.0; // множник швидкості "рухомих" ефектів: >1 швидше, <1 повільніше
 
 // ---------- ФІЗИЧНІ КНОПКИ СКИДАННЯ WIFI (будь-яка з двох, утримання 5 сек) ----------
 #define WIFI_RESET_BUTTON_PIN 9      // BOOT-кнопка на більшості ESP32-C3 плат (вбудована)
@@ -287,7 +286,7 @@ void fxJuggle() {
 void fxTheaterChase() {
   static unsigned long lastUpdate = 0;
   static int q = 0;
-  if (millis() - lastUpdate < (50 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 50) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 255);
   for (int i = 0; i < NUM_LEDS; i += 3) {
@@ -303,7 +302,7 @@ void fxColorWipe() {
   static int pos = 0;
   static uint8_t colorIndex = 0;
   static const CRGB colors[] = {CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::Yellow, CRGB::Cyan, CRGB::Magenta};
-  if (millis() - lastUpdate < (30 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 30) return;
   lastUpdate = millis();
   leds[pos] = colors[colorIndex % 6];
   pos++;
@@ -314,7 +313,7 @@ void fxLarsonScanner() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
   static int dir = 1;
-  if (millis() - lastUpdate < (20 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 60);
   leds[pos] = CRGB::Red;
@@ -342,7 +341,7 @@ void fxMeteorRain() {
   static unsigned long lastUpdate = 0;
   static int meteorPos = 0;
   const byte meteorSize = 10, meteorTrailDecay = 64; // більший метеор і довший шлейф — під 118-пиксельну стрічку
-  if (millis() - lastUpdate < (20 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     if (random8(10) > 5) leds[i].fadeToBlackBy(meteorTrailDecay);
@@ -377,7 +376,7 @@ void fxPlasma() {
 void fxComet() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < (25 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 25) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 90);
   leds[pos] = CHSV(gHue, 255, 255);
@@ -388,7 +387,7 @@ void fxComet() {
 void fxStrobe() {
   static unsigned long lastUpdate = 0;
   static bool on = false;
-  if (millis() - lastUpdate < (100 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 100) return;
   lastUpdate = millis();
   on = !on;
   fill_solid(leds, NUM_LEDS, on ? CRGB(CHSV(gHue, 255, 255)) : CRGB::Black);
@@ -413,7 +412,7 @@ void fxFireworks() {
   static bool exploding = false;
   static unsigned long explodeStart = 0;
 
-  if (millis() - lastUpdate < (20 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
 
   fadeToBlackBy(leds, NUM_LEDS, 40);
@@ -448,15 +447,16 @@ void fxBouncingBalls() {
     initedBalls = true;
   }
 
-  if (millis() - lastUpdate < (20 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
 
   fadeToBlackBy(leds, NUM_LEDS, 100);
 
-  // Фізичні коефіцієнти (масштабовано під 118-пиксельну стрічку — на короткій
-  // ці ж числа давали занадто мляве падіння й ледь помітний відскок)
-  const float gravity = -0.35 * effectSpeedFactor; // сильніша гравітація — швидше падіння на довгій дистанції
-  const float bounceImpact = -0.90;    // Пружність відскоку (повертає 90% енергії)
+  // Фізика без згасання: кожен удар об землю дає ОДНАКОВУ силу відскоку,
+  // а не поступово згасаючу (0.9 за раз давало помітно нижчі й швидші
+  // стрибки більшість часу, бо низькі стрибки займають менше часу —
+  // і саме тому й було "враження", що м'ячик завжди скаче невисоко)
+  const float gravity = -0.35;
 
   for (int i = 0; i < numBalls; i++) {
     ballVel[i] += gravity;             // Додаємо гравітацію до швидкості
@@ -464,13 +464,8 @@ void fxBouncingBalls() {
 
     // Перевірка удару об землю
     if (ballPos[i] <= 0) {
-      ballPos[i] = 0;                  // Залишаємо на землі
-      ballVel[i] = ballVel[i] * bounceImpact; // Відскок вгору
-
-      // Анти-затухання: якщо енергії замало для підйому, штовхаємо надійно назад
-      if (ballVel[i] < 3.0) { // раніше 0.5 — стрибки встигали згаснути до 8-12 пикселів перш ніж спрацьовувало
-        ballVel[i] = 5.0 + i * 1.3; // сильніший поштовх — видимий відскок на висоту ~35-70 пикселів
-      }
+      ballPos[i] = 0;
+      ballVel[i] = 8.0 + i * 1.5; // однакова сила відскоку щоразу — висота ~90-135 пикселів стабільно
     }
 
     // Переводимо позицію напряму в індекс світлодіода
@@ -495,7 +490,7 @@ void fxNoisePlasma() {
 void fxPoliceLights() {
   static unsigned long lastUpdate = 0;
   static bool on = false;
-  if (millis() - lastUpdate < (80 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 80) return;
   lastUpdate = millis();
   on = !on;
   int half = NUM_LEDS / 2;
@@ -509,7 +504,7 @@ void fxPoliceLights() {
 void fxGradientChase() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < (30 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 30) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 255);
   int blockSize = max(3, NUM_LEDS / 6);
@@ -532,7 +527,7 @@ void fxSparkleFade() {
 void fxRainbowChase() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < (30 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 30) return;
   lastUpdate = millis();
   fadeToBlackBy(leds, NUM_LEDS, 60);
   leds[pos] = CHSV(gHue, 255, 255);
@@ -544,7 +539,7 @@ void fxRainbowChase() {
 void fxSquarePulse() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < (40 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 40) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ((i + pos) % 6 < 3) ? CRGB(CHSV(gHue, 255, 255)) : CRGB::Black;
@@ -575,7 +570,7 @@ void fxRipple() {
   static unsigned long lastUpdate = 0;
   static int center = -1;
   static float radius = 0;
-  if (millis() - lastUpdate < (20 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
 
   if (center < 0) { center = random16(NUM_LEDS); radius = 0; }
@@ -607,7 +602,7 @@ void fxIceFire() {
 void fxMatrixRain() {
   static unsigned long lastUpdate = 0;
   static int drops[3] = {0, -8, -16};
-  if (millis() - lastUpdate < (40 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 40) return;
   lastUpdate = millis();
 
   fadeToBlackBy(leds, NUM_LEDS, 80);
@@ -622,7 +617,7 @@ void fxMatrixRain() {
 void fxColorWheelRotate() {
   static unsigned long lastUpdate = 0;
   static uint8_t hue = 0;
-  if (millis() - lastUpdate < (800 / effectSpeedFactor)) return; // тримає кожен колір довше, ніж просто перелив
+  if (millis() - lastUpdate < 800) return; // тримає кожен колір довше, ніж просто перелив
   lastUpdate = millis();
   hue += 32; // дискретні кроки кольору, а не плавний перелив
   fill_solid(leds, NUM_LEDS, CHSV(hue, 255, 220));
@@ -632,7 +627,7 @@ void fxColorWheelRotate() {
 void fxRandomMarch() {
   static unsigned long lastUpdate = 0;
   static uint8_t blockHue = 0;
-  if (millis() - lastUpdate < (150 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 150) return;
   lastUpdate = millis();
 
   for (int i = NUM_LEDS - 1; i > 0; i--) leds[i] = leds[i - 1];
@@ -657,7 +652,7 @@ void fxDualScan() {
   static unsigned long lastUpdate = 0;
   static int pos1 = 0, pos2 = 0;
   static int dir1 = 1, dir2 = -1;
-  if (millis() - lastUpdate < (20 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 20) return;
   lastUpdate = millis();
   if (pos2 == 0) pos2 = NUM_LEDS - 1; // ініціалізація стартової позиції другої крапки
 
@@ -680,7 +675,7 @@ void fxSnowSparkle() {
 void fxHalloweenChase() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < (100 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 100) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     leds[i] = ((i + pos) % 4 < 2) ? CRGB::OrangeRed : CRGB(80, 0, 130); // помаранчевий / фіолетовий
@@ -692,7 +687,7 @@ void fxHalloweenChase() {
 void fxColorSweep() {
   static unsigned long lastUpdate = 0;
   static int step = 0;
-  if (millis() - lastUpdate < (40 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 40) return;
   lastUpdate = millis();
   int half = NUM_LEDS / 2;
   if (step > half) { step = 0; FastLED.clear(); gHue += 40; }
@@ -707,7 +702,7 @@ void fxColorSweep() {
 void fxBlinkRainbow() {
   static unsigned long lastUpdate = 0;
   static bool on = false;
-  if (millis() - lastUpdate < (400 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 400) return;
   lastUpdate = millis();
   on = !on;
   if (on) { fill_solid(leds, NUM_LEDS, CHSV(gHue, 255, 255)); gHue += 32; }
@@ -717,7 +712,7 @@ void fxBlinkRainbow() {
 // ---------- 38. Мерехтіння свічки (теплий колір, що тремтить) ----------
 void fxFireFlicker() {
   static unsigned long lastUpdate = 0;
-  if (millis() - lastUpdate < (50 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 50) return;
   lastUpdate = millis();
   for (int i = 0; i < NUM_LEDS; i++) {
     uint8_t flicker = random8(180, 255);
@@ -729,7 +724,7 @@ void fxFireFlicker() {
 void fxRotatingBands() {
   static unsigned long lastUpdate = 0;
   static int offset = 0;
-  if (millis() - lastUpdate < (60 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 60) return;
   lastUpdate = millis();
   int bandSize = max(2, NUM_LEDS / 4);
   for (int i = 0; i < NUM_LEDS; i++) {
@@ -743,7 +738,7 @@ void fxRotatingBands() {
 void fxChaseBlackout() {
   static unsigned long lastUpdate = 0;
   static int pos = 0;
-  if (millis() - lastUpdate < (60 / effectSpeedFactor)) return;
+  if (millis() - lastUpdate < 60) return;
   lastUpdate = millis();
   fill_solid(leds, NUM_LEDS, CHSV(gHue, 255, 200));
   int blockSize = max(2, NUM_LEDS / 6);
@@ -965,13 +960,6 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
   <input type="range" id="durationSlider" min="5" max="120" value="30">
   <span id="durationValue" style="min-width:60px;">30 сек</span>
 </div>
-<div class="row" id="speedRow">
-  <span style="min-width:90px;">Швидкість</span>
-  <span>🐌</span>
-  <input type="range" id="speedSlider" min="25" max="400" value="100">
-  <span>🚀</span>
-  <span id="speedValue" style="min-width:60px;">100%</span>
-</div>
 <div class="row">
   <button onclick="setAuto()">Авто-перемикання ефектів</button>
   <button onclick="resetWifi()" style="background:#733;">Змінити WiFi</button>
@@ -983,9 +971,6 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 
 <script>
 let EFFECT_NAMES = [];
-// Індекси ефектів, для яких повзунок швидкості реально щось змінює
-// (решта або статичні, або оновлюються щокадру без власного темпу руху)
-const SPEED_APPLICABLE_INDICES = new Set([6,7,8,10,14,15,17,18,20,21,23,24,26,28,29,30,32,34,35,36,37,38,39]);
 let clockOffsetMs = null;
 const tickClock = () => {
   if (clockOffsetMs === null) return;
@@ -1036,12 +1021,6 @@ const loadStatus = async () => {
     document.getElementById('durationSlider').value = s.effectDuration;
     document.getElementById('durationValue').innerText = s.effectDuration + ' сек';
   }
-  if (!speedDragging) {
-    document.getElementById('speedSlider').value = s.effectSpeed;
-    document.getElementById('speedValue').innerText = s.effectSpeed + '%';
-  }
-  const speedApplies = !s.mic && !s.staticLight && !s.auto && SPEED_APPLICABLE_INDICES.has(s.index);
-  document.getElementById('speedRow').style.display = speedApplies ? 'flex' : 'none';
   document.querySelectorAll('.grid button').forEach((b,i)=>{
     b.classList.toggle('active', !s.mic && i === s.index);
   });
@@ -1169,21 +1148,6 @@ durationSlider.addEventListener('change', () => {
   durationDragging = false;
 });
 
-let speedDragging = false;
-let speedDebounce = null;
-const speedSlider = document.getElementById('speedSlider');
-speedSlider.addEventListener('input', (e) => {
-  speedDragging = true;
-  document.getElementById('speedValue').innerText = e.target.value + '%';
-  clearTimeout(speedDebounce);
-  speedDebounce = setTimeout(() => {
-    fetch('/effectspeed?v=' + e.target.value);
-  }, 150);
-});
-speedSlider.addEventListener('change', () => {
-  speedDragging = false;
-});
-
 let micSensDragging = false;
 let micSensDebounce = null;
 const micSensSlider = document.getElementById('micSensSlider');
@@ -1241,7 +1205,6 @@ void handleStatus() {
   doc["brightness"] = currentBrightness;
   doc["songBpm"] = songBpm;
   doc["effectDuration"] = effectDuration / 1000; // в секундах для вебу
-  doc["effectSpeed"] = (int)(effectSpeedFactor * 100); // у відсотках для вебу
   unsigned long elapsed = millis() - lastSwitch;
   doc["effectRemainingSec"] = (effectDuration > elapsed) ? (effectDuration - elapsed) / 1000 : 0;
   doc["epochSec"] = (unsigned long)time(nullptr);
@@ -1343,17 +1306,6 @@ void handleEffectDuration() {
   server.send(200, "text/plain", "OK");
 }
 
-void handleEffectSpeed() {
-  if (server.hasArg("v")) {
-    int percent = server.arg("v").toInt();
-    if (percent >= 25 && percent <= 400) {
-      effectSpeedFactor = percent / 100.0;
-      Serial.printf("[web] Швидкість ефектів: %d%%\n", percent);
-    }
-  }
-  server.send(200, "text/plain", "OK");
-}
-
 void handleBrightness() {
   if (server.hasArg("v")) {
     int v = server.arg("v").toInt();
@@ -1395,7 +1347,6 @@ void setupWebServer() {
   server.on("/mic", handleMic);
   server.on("/staticlight", handleStaticLight);
   server.on("/brightness", handleBrightness);
-  server.on("/effectspeed", handleEffectSpeed);
   server.on("/effectduration", handleEffectDuration);
   server.on("/micsensitivity", handleMicSensitivity);
   server.on("/checkupdate", handleCheckUpdate);
@@ -1591,9 +1542,8 @@ void loop() {
     if (autoCycle && now - lastSwitch >= effectDuration) {
       lastSwitch = now;
       currentEffect = (currentEffect + 1) % NUM_EFFECTS;
-      effectSpeedFactor = random(50, 201) / 100.0; // випадкова швидкість 50%-200% для кожного нового ефекту в авто-режимі
       FastLED.clear();
-      Serial.printf("Перемикаю на ефект %d/%d: %s (швидкість %.0f%%)\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect], effectSpeedFactor * 100);
+      Serial.printf("Перемикаю на ефект %d/%d: %s\n", currentEffect + 1, NUM_EFFECTS, effectNames[currentEffect]);
     }
     // Фіксований кадр ~60 FPS замість delay(10) — сталіша частота кадрів,
     // і loop() крутиться швидше між кадрами, встигаючи частіше обслуговувати
