@@ -86,7 +86,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     3   // GPIO4 спалений, перенесено на GPIO3 (вільний, не strapping-пін)
-#define NUM_LEDS    118          // <-- 118 фізичних адресованих LED (кожен зі своїм контролером)
+#define NUM_LEDS    117          // <-- 118 фізичних адресованих LED (кожен зі своїм контролером)
 #define LED_TYPE    WS2812B  // звичайна RGB-стрічка (3 контакти: +5V, DIN/DO, GND — не RGBW)
 #define COLOR_ORDER GRB   // скинуто на стандартний під НОВУ стрічку — BRG був підібраний під стару 12V-стрічку
 
