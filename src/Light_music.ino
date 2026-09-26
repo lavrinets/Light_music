@@ -55,7 +55,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "4.5.1"
+#define FIRMWARE_VERSION "4.6.0"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -86,7 +86,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     3   // GPIO4 спалений, перенесено на GPIO3 (вільний, не strapping-пін)
-#define NUM_LEDS    117          // <-- 118 фізичних адресованих LED (кожен зі своїм контролером)
+#define NUM_LEDS    117          // <-- 117 фізичних адресованих LED (кожен зі своїм контролером)
 #define LED_TYPE    WS2812B  // звичайна RGB-стрічка (3 контакти: +5V, DIN/DO, GND — не RGBW)
 #define COLOR_ORDER GRB   // скинуто на стандартний під НОВУ стрічку — BRG був підібраний під стару 12V-стрічку
 
@@ -931,6 +931,7 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <body>
 <h1>Light_music</h1>
 <div id="clock" style="font-size:48px; font-weight:bold; text-align:center; margin:10px 0; letter-spacing:2px; color:#6cf;">--:--:--</div>
+<div id="netInfo" style="text-align:center; font-size:12px; color:#777; margin-bottom:16px;">IP: -- | 📶 --</div>
 <div id="status">Завантаження...</div>
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
@@ -1007,6 +1008,8 @@ const loadStatus = async () => {
     if (s.epochSec > 1700000000) {
       clockOffsetMs = s.epochSec * 1000 - Date.now();
     }
+    const rssiLabel = s.rssi > -50 ? 'чудовий' : s.rssi > -60 ? 'добрий' : s.rssi > -70 ? 'слабкий' : 'дуже слабкий';
+    document.getElementById('netInfo').innerText = `IP: ${s.ip} | 📶 ${s.rssi} dBm (${rssiLabel})`;
     document.getElementById('micToggle').checked = s.mic;
     const offBtn = document.getElementById('offBtn');
     offBtn.innerText = s.ledsOff ? '⏻ Увімкнути стрічку' : '⏻ Вимкнути стрічку';
@@ -1230,6 +1233,8 @@ void handleStatus() {
   unsigned long elapsed = millis() - lastSwitch;
   doc["effectRemainingSec"] = (effectDuration > elapsed) ? (effectDuration - elapsed) / 1000 : 0;
   doc["epochSec"] = (unsigned long)time(nullptr);
+  doc["ip"] = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "н/д";
+  doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["micSensitivity"] = micSensitivity;
   doc["micDetectedBpm"] = micDetectedBpm;
   doc["version"] = FIRMWARE_VERSION;
