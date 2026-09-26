@@ -34,6 +34,10 @@
     Утримати БУДЬ-ЯКУ з цих двох кнопок 5 секунд -> скидає збережений WiFi
     і перезавантажує плату в режим налаштування (LightMusic-Setup).
 
+    Вимкнення стрічки — тільки програмно, без фізичної кнопки:
+    кнопка "⏻ Вимкнути стрічку" на вебсторінці. Найвищий пріоритет —
+    гасить стрічку незалежно від того, який ефект/режим був активний.
+
   === НАЛАШТУВАННЯ НА SYNOLOGY ===
   Постав пакет Web Station (або просто розшар папку через File Station з веб-доступом).
   Створи папку /firmware з двома файлами:
@@ -51,7 +55,7 @@
 */
 
 // ======================= ВЕРСІЯ ПРОШИВКИ =======================
-#define FIRMWARE_VERSION "4.4.2"
+#define FIRMWARE_VERSION "4.5.1"
 // Підніми цю цифру ПЕРЕД заливкою нової версії на Synology,
 // інакше плата вирішить, що оновлення не потрібне.
 // ===================================================================
@@ -82,7 +86,7 @@ const unsigned long UPDATE_CHECK_INTERVAL = 3600000UL; // раз на годин
 
 // ---------- НАЛАШТУВАННЯ СТРІЧКИ ----------
 #define LED_PIN     3   // GPIO4 спалений, перенесено на GPIO3 (вільний, не strapping-пін)
-#define NUM_LEDS    117          // <-- 118 фізичних адресованих LED (кожен зі своїм контролером)
+#define NUM_LEDS    118          // <-- 118 фізичних адресованих LED (кожен зі своїм контролером)
 #define LED_TYPE    WS2812B  // звичайна RGB-стрічка (3 контакти: +5V, DIN/DO, GND — не RGBW)
 #define COLOR_ORDER GRB   // скинуто на стандартний під НОВУ стрічку — BRG був підібраний під стару 12V-стрічку
 
@@ -96,6 +100,8 @@ uint8_t currentBrightness = 5; // 0-255, тепер керується з веб
 #define WIFI_RESET_HOLD_MS 5000      // утримувати 5 сек, щоб скинути WiFi
 unsigned long buttonPressStart = 0;
 bool buttonWasPressed = false;
+
+bool ledsOff = false;
 
 CRGB leds[NUM_LEDS];
 uint8_t gHue = 0;
@@ -929,6 +935,10 @@ const char PAGE_HTML[] PROGMEM = R"HTML(
 <div id="updateStatus" style="margin-bottom:16px; font-size:13px; color:#999;"></div>
 
 <div class="row">
+  <button id="offBtn" onclick="toggleOff()" style="background:#733;">⏻ Вимкнути стрічку</button>
+</div>
+
+<div class="row">
   <button id="staticLightBtn" onclick="toggleStaticLight()">💡 Статичне світло</button>
   <input type="color" id="staticColorPicker" value="#ffffff">
 </div>
@@ -998,6 +1008,9 @@ const loadStatus = async () => {
       clockOffsetMs = s.epochSec * 1000 - Date.now();
     }
     document.getElementById('micToggle').checked = s.mic;
+    const offBtn = document.getElementById('offBtn');
+    offBtn.innerText = s.ledsOff ? '⏻ Увімкнути стрічку' : '⏻ Вимкнути стрічку';
+    offBtn.style.background = s.ledsOff ? '#a33' : '#733';
     const staticBtn = document.getElementById('staticLightBtn');
     staticBtn.classList.toggle('active', s.staticLight);
     if (!staticColorDragging) {
@@ -1083,6 +1096,10 @@ const checkUpdate = () => {
   setTimeout(poll, 2000);
 };
 let staticColorDragging = false;
+const toggleOff = () => {
+  fetch('/toggleoff').then(loadStatus);
+};
+
 const toggleStaticLight = () => {
   const isOn = document.getElementById('staticLightBtn').classList.contains('active');
   const color = document.getElementById('staticColorPicker').value.substring(1);
@@ -1202,6 +1219,7 @@ void handleStatus() {
   doc["index"] = currentEffect;
   doc["mic"] = micEnabled;
   doc["staticLight"] = staticLightEnabled;
+  doc["ledsOff"] = ledsOff;
   char colorHex[7];
   sprintf(colorHex, "%02X%02X%02X", staticColor.r, staticColor.g, staticColor.b);
   doc["staticColor"] = String(colorHex);
@@ -1249,6 +1267,12 @@ void handleMic() {
     if (micEnabled) autoCycle = false;
     Serial.printf("[web] Мікрофон: %s\n", micEnabled ? "увімкнено" : "вимкнено");
   }
+  server.send(200, "text/plain", "OK");
+}
+
+void handleToggleOff() {
+  ledsOff = !ledsOff;
+  Serial.printf("[web] Стрічка: %s\n", ledsOff ? "вимкнено" : "увімкнено");
   server.send(200, "text/plain", "OK");
 }
 
@@ -1350,6 +1374,7 @@ void setupWebServer() {
   server.on("/auto", handleSetAuto);
   server.on("/mic", handleMic);
   server.on("/staticlight", handleStaticLight);
+  server.on("/toggleoff", handleToggleOff);
   server.on("/brightness", handleBrightness);
   server.on("/effectduration", handleEffectDuration);
   server.on("/micsensitivity", handleMicSensitivity);
@@ -1531,7 +1556,12 @@ void loop() {
     // шквал розривів автентифікації щосекунди. Довіряємо тільки вбудованому.
   }
 
-  if (staticLightEnabled) {
+  if (ledsOff) {
+    EVERY_N_MILLISECONDS(50) {
+      fill_solid(leds, NUM_LEDS, CRGB::Black);
+      FastLED.show();
+    }
+  } else if (staticLightEnabled) {
     EVERY_N_MILLISECONDS(50) {
       fill_solid(leds, NUM_LEDS, staticColor);
       FastLED.show();
